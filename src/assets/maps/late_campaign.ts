@@ -229,7 +229,7 @@ export const ep2Hydra = arena(
   'ep2_hydra',
   'Cancel Culture Hydra',
   2,
-  'ep3_forms',
+  'shop_2',
   '#2a2030',
   '#1a1020',
   [
@@ -334,7 +334,7 @@ export const ep3Autopen = arena(
   'ep3_autopen',
   'Autopen Chamber',
   3,
-  'ep4_warehouse',
+  'shop_3',
   '#3a3530',
   '#201810',
   [
@@ -447,7 +447,7 @@ export const ep4Fraud = arena(
   'ep4_fraud',
   'Election Fraud',
   4,
-  'ep5_court',
+  'shop_4',
   '#1a1a28',
   '#100818',
   [
@@ -553,7 +553,7 @@ export const ep5Tribunal = arena(
   'ep5_tribunal',
   'Rogue Judge Tribunal',
   5,
-  'ep6_studio',
+  'shop_5',
   '#2a2535',
   '#15101a',
   [
@@ -667,7 +667,7 @@ export const ep6Leviathan = arena(
   'ep6_leviathan',
   'Media Leviathan',
   6,
-  'ep7_approach', // special: game redirects via branch
+  'shop_6',
   '#201018',
   '#100810',
   [

@@ -31,7 +31,7 @@ export const ep0Basement: GameMap = {
   id: 'ep0_basement',
   name: 'The Basement of Ambition',
   episode: 0,
-  nextMapId: 'ep1_parking',
+  nextMapId: 'shop_0',
   width: layout.width,
   height: layout.height,
   grid: layout.grid,

@@ -1,9 +1,12 @@
 /** Campaign save / continue (localStorage). */
 
-export const SAVE_KEY = 'trump-doom-save-v2';
+import { defaultMeta, type MetaProgress } from './shop';
+import type { WeaponId } from './entities';
+
+export const SAVE_KEY = 'trump-doom-save-v3';
 
 export interface SaveData {
-  version: 2;
+  version: 3;
   mapId: string;
   player: {
     x: number;
@@ -14,19 +17,20 @@ export interface SaveData {
     brand: number;
     hasRedKey: boolean;
     hasBlueKey: boolean;
-    weapon: 'gavel' | 'mic';
+    weapon: WeaponId;
     plaquesRead: string[];
     conversions: number;
+    shield: number;
   };
   completedMaps: string[];
   mapFlags: Record<string, string[]>;
   locationLabel: string;
   savedAt: number;
-  /** Deaths since last successful level clear */
   levelDeaths: number;
-  /** Section-restart penalties this run (for Very Stable Legend ending) */
   sectionRestarts: number;
   deepfakeBeaten: boolean;
+  meta: MetaProgress;
+  shopNextMapId?: string;
 }
 
 export function hasSave(): boolean {
@@ -35,16 +39,36 @@ export function hasSave(): boolean {
 
 export function loadSave(): SaveData | null {
   try {
-    const raw = localStorage.getItem(SAVE_KEY) ?? localStorage.getItem('trump-doom-save-v1');
+    const raw =
+      localStorage.getItem(SAVE_KEY) ??
+      localStorage.getItem('trump-doom-save-v2') ??
+      localStorage.getItem('trump-doom-save-v1');
     if (!raw) return null;
-    const data = JSON.parse(raw) as Partial<SaveData> & { version?: number };
+    const data = JSON.parse(raw) as Partial<SaveData> & {
+      version?: number;
+      player?: SaveData['player'] & { weapon?: string };
+    };
     if (!data.mapId || !data.player) return null;
+    const meta = { ...defaultMeta(), ...(data.meta ?? {}) };
+    meta.weaponLevel = { ...defaultMeta().weaponLevel, ...(data.meta?.weaponLevel ?? {}) };
+    meta.ownedWeapons = data.meta?.ownedWeapons ?? ['gavel', 'mic'];
+    const weapon = (data.player.weapon as WeaponId) || 'gavel';
     return {
-      version: 2,
+      version: 3,
       mapId: data.mapId,
       player: {
-        ...data.player,
+        x: data.player.x,
+        y: data.player.y,
+        angle: data.player.angle,
+        resolve: data.player.resolve,
+        voice: data.player.voice,
+        brand: data.player.brand,
+        hasRedKey: data.player.hasRedKey,
         hasBlueKey: data.player.hasBlueKey ?? false,
+        weapon: meta.ownedWeapons.includes(weapon) ? weapon : 'gavel',
+        plaquesRead: data.player.plaquesRead ?? [],
+        conversions: data.player.conversions ?? 0,
+        shield: data.player.shield ?? meta.shieldMax,
       },
       completedMaps: data.completedMaps ?? [],
       mapFlags: data.mapFlags ?? {},
@@ -53,6 +77,8 @@ export function loadSave(): SaveData | null {
       levelDeaths: data.levelDeaths ?? 0,
       sectionRestarts: data.sectionRestarts ?? 0,
       deepfakeBeaten: data.deepfakeBeaten ?? false,
+      meta,
+      shopNextMapId: data.shopNextMapId,
     };
   } catch {
     return null;
@@ -60,13 +86,14 @@ export function loadSave(): SaveData | null {
 }
 
 export function writeSave(data: SaveData) {
-  data.version = 2;
+  data.version = 3;
   data.savedAt = Date.now();
   localStorage.setItem(SAVE_KEY, JSON.stringify(data));
 }
 
 export function clearSave() {
   localStorage.removeItem(SAVE_KEY);
+  localStorage.removeItem('trump-doom-save-v2');
   localStorage.removeItem('trump-doom-save-v1');
 }
 

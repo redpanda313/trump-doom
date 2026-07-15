@@ -78,6 +78,11 @@ export const SECTIONS: SectionDef[] = [
 ];
 
 export function sectionForMap(mapId: string): SectionDef {
+  if (mapId.startsWith('shop_')) {
+    const n = Number(mapId.replace('shop_', '')) || 0;
+    // Shop after section n belongs to transition after that section
+    return SECTIONS[Math.min(n, SECTIONS.length - 1)]!;
+  }
   const s = SECTIONS.find((sec) => sec.mapIds.includes(mapId) || sec.startMapId === mapId);
   return s ?? SECTIONS[0]!;
 }

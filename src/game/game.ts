@@ -30,7 +30,7 @@ import {
   createDefaultPlayer,
   bossMeta,
 } from './entities';
-import { tryPrimaryFire, tryAltFire, weaponLabel } from './weapons';
+import { tryPrimaryFire, tryAltFire, weaponLabel, applyMetaToPlayer, syncMetaFromPlayer } from './weapons';
 import { getMapTemplate, CAMPAIGN_START, countCampaignPlaques } from '../assets/maps';
 import { type SaveData, writeSave, loadSave, clearSave } from './save';
 import { BASE_LOOK_SENS } from './settings';
@@ -41,6 +41,16 @@ import {
   evaluateEnding,
   type EndingResult,
 } from './campaign';
+import {
+  defaultMeta,
+  type MetaProgress,
+  SHOP_CATALOG,
+  itemCost,
+  canShowItem,
+  applyPurchase,
+  isShopMapId,
+} from './shop';
+import type { WeaponId } from './entities';
 
 const RENDER_W = 320;
 const RENDER_H = 200;
@@ -100,6 +110,9 @@ export class Game {
   private sectionRestarts = 0;
   private deepfakeBeaten = false;
   private ending: EndingResult | null = null;
+  private meta: MetaProgress = defaultMeta();
+  private shopOpen = false;
+  private dropSerial = 0;
 
   private resolveFill: HTMLElement;
   private voiceFill: HTMLElement;
@@ -114,6 +127,9 @@ export class Game {
   private dashFill: HTMLElement;
   private pauseMenu: HTMLElement;
   private locationEl: HTMLElement | null;
+  private shopPanel: HTMLElement | null = null;
+  private shopList: HTMLElement | null = null;
+  private shopBrandEl: HTMLElement | null = null;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -123,6 +139,10 @@ export class Game {
     this.mapId = CAMPAIGN_START;
     this.map = cloneMap(getMapTemplate(this.mapId));
     this.player = createDefaultPlayer(this.map.spawn);
+    applyMetaToPlayer(this.player, this.meta);
+    this.player.resolve = this.player.maxResolve;
+    this.player.voice = this.player.maxVoice;
+    this.player.shield = this.player.maxShield;
 
     if (mode === 'continue') {
       const save = loadSave();
@@ -168,7 +188,11 @@ export class Game {
     this.dashFill = document.getElementById('dash-fill')!;
     this.pauseMenu = document.getElementById('pause-menu')!;
     this.locationEl = document.getElementById('location-line');
+    this.shopPanel = document.getElementById('shop-panel');
+    this.shopList = document.getElementById('shop-list');
+    this.shopBrandEl = document.getElementById('shop-brand');
     this.wirePauseMenu();
+    this.wireShop();
   }
 
   private applySave(save: SaveData) {
@@ -176,27 +200,113 @@ export class Game {
     this.map = cloneMap(getMapTemplate(this.mapId));
     this.completedMaps = [...save.completedMaps];
     this.mapFlags = { ...save.mapFlags };
+    this.meta = { ...defaultMeta(), ...save.meta };
+    this.meta.weaponLevel = { ...defaultMeta().weaponLevel, ...save.meta.weaponLevel };
+    this.meta.ownedWeapons = [...(save.meta.ownedWeapons ?? ['gavel', 'mic'])];
+    this.meta.purchased = [...(save.meta.purchased ?? [])];
     const p = save.player;
-    this.player = {
-      x: p.x,
-      y: p.y,
-      angle: p.angle,
-      resolve: p.resolve,
-      voice: p.voice,
-      brand: p.brand,
-      momentum: 0,
-      hasRedKey: p.hasRedKey,
-      hasBlueKey: p.hasBlueKey ?? false,
-      weapon: p.weapon,
-      attackCooldown: 0,
-      invuln: 1,
-      plaquesRead: new Set(p.plaquesRead),
-      conversions: p.conversions,
-    };
+    this.player = createDefaultPlayer({ x: p.x, y: p.y, angle: p.angle });
+    this.player.brand = p.brand;
+    this.player.hasRedKey = p.hasRedKey;
+    this.player.hasBlueKey = p.hasBlueKey ?? false;
+    this.player.weapon = p.weapon;
+    this.player.plaquesRead = new Set(p.plaquesRead);
+    this.player.conversions = p.conversions;
+    this.player.attackCooldown = 0;
+    this.player.invuln = 1;
+    applyMetaToPlayer(this.player, this.meta);
+    this.player.resolve = Math.min(p.resolve, this.player.maxResolve);
+    this.player.voice = Math.min(p.voice, this.player.maxVoice);
+    this.player.shield = Math.min(p.shield ?? this.player.maxShield, this.player.maxShield);
     this.prevResolve = this.player.resolve;
     this.levelDeaths = save.levelDeaths ?? 0;
     this.sectionRestarts = save.sectionRestarts ?? 0;
     this.deepfakeBeaten = save.deepfakeBeaten ?? false;
+  }
+
+  private wireShop() {
+    document.getElementById('btn-shop-close')?.addEventListener('click', () => {
+      this.setShopOpen(false);
+      this.canvas.requestPointerLock();
+    });
+    document.getElementById('btn-shop-leave')?.addEventListener('click', () => {
+      this.leaveShop();
+    });
+  }
+
+  private setShopOpen(v: boolean) {
+    this.shopOpen = v;
+    if (!this.shopPanel) return;
+    if (v) {
+      this.shopPanel.classList.remove('hidden');
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.refreshShopUi();
+    } else {
+      this.shopPanel.classList.add('hidden');
+    }
+  }
+
+  private refreshShopUi() {
+    if (!this.shopList || !this.shopBrandEl) return;
+    this.shopBrandEl.textContent = String(this.player.brand);
+    this.shopList.innerHTML = '';
+    const items = SHOP_CATALOG.filter((it) => canShowItem(it, this.meta));
+    if (!items.length) {
+      this.shopList.innerHTML = '<p class="shop-item-desc">No new deals. Come back after more sections.</p>';
+      return;
+    }
+    for (const item of items) {
+      const cost = itemCost(item, this.meta);
+      const row = document.createElement('div');
+      row.className = `shop-item cat-${item.category}`;
+      const can = this.player.brand >= cost;
+      row.innerHTML = `
+        <div class="shop-item-name">${item.name}</div>
+        <div class="shop-item-desc">${item.desc}</div>
+        <button type="button" ${can ? '' : 'disabled'}>${cost} Brand</button>
+      `;
+      const btn = row.querySelector('button')!;
+      btn.addEventListener('click', () => {
+        if (this.player.brand < cost) return;
+        this.player.brand -= cost;
+        applyPurchase(item, this.meta);
+        applyMetaToPlayer(this.player, this.meta);
+        this.player.resolve = Math.min(this.player.maxResolve, this.player.resolve + 5);
+        this.player.shield = this.player.maxShield;
+        this.audio.pickup();
+        this.showToast(`Purchased: ${item.name}`, 2);
+        this.refreshShopUi();
+        this.saveGame();
+      });
+      this.shopList.appendChild(row);
+    }
+  }
+
+  private leaveShop() {
+    if (!isShopMapId(this.mapId)) return;
+    const next = this.map.nextMapId;
+    this.setShopOpen(false);
+    // Mark section progress for unlock gates
+    const n = Number(this.mapId.replace('shop_', '')) + 1;
+    this.meta.sectionsCleared = Math.max(this.meta.sectionsCleared, n);
+    syncMetaFromPlayer(this.player, this.meta);
+    let dest = next;
+    if (dest === 'ep7_approach') {
+      dest = chooseEp7Approach(this.player.brand, this.player.plaquesRead.size);
+      this.showToast(
+        dest === 'ep7_gold'
+          ? 'High Brand — Golden path!'
+          : dest === 'ep7_codex'
+            ? 'Codex path unlocked!'
+            : 'Swamp approach.',
+        3,
+      );
+    }
+    if (dest) {
+      this.pendingNextMap = dest;
+      this.transitionTimer = 0.4;
+      this.mapComplete = true;
+    }
   }
 
   private wirePauseMenu() {
@@ -280,8 +390,9 @@ export class Game {
 
   private saveGame() {
     if (this.campaignComplete) return;
+    syncMetaFromPlayer(this.player, this.meta);
     const data: SaveData = {
-      version: 2,
+      version: 3,
       mapId: this.mapId,
       player: {
         x: this.player.x,
@@ -295,6 +406,7 @@ export class Game {
         weapon: this.player.weapon,
         plaquesRead: [...this.player.plaquesRead],
         conversions: this.player.conversions,
+        shield: this.player.shield,
       },
       completedMaps: [...this.completedMaps],
       mapFlags: { ...this.mapFlags },
@@ -303,6 +415,7 @@ export class Game {
       levelDeaths: this.levelDeaths,
       sectionRestarts: this.sectionRestarts,
       deepfakeBeaten: this.deepfakeBeaten,
+      meta: structuredClone(this.meta),
     };
     writeSave(data);
   }
@@ -493,9 +606,23 @@ export class Game {
     this.applyMapFlags();
     // Re-snap entities after flags open walls/secrets
     this.sanitizeEntityPositions();
+    applyMetaToPlayer(this.player, this.meta);
+    if (heal) {
+      this.player.resolve = Math.min(this.player.maxResolve, this.player.resolve);
+      this.player.shield = this.player.maxShield;
+    } else {
+      this.player.resolve = this.player.maxResolve;
+      this.player.voice = this.player.maxVoice;
+      this.player.shield = this.player.maxShield;
+    }
     this.saveGame();
     this.showToast(`${this.map.name} — ${this.zone.label}`, 3);
     this.audio.levelClear();
+    if (isShopMapId(id)) {
+      const n = Number(id.replace('shop_', '')) + 1;
+      this.meta.sectionsCleared = Math.max(this.meta.sectionsCleared, n);
+      window.setTimeout(() => this.setShopOpen(true), 400);
+    }
   }
 
   /** After doors/secrets open, pull any stuck sprites into open floor. */
@@ -561,7 +688,11 @@ export class Game {
       this.setPaused(!this.paused);
     }
 
-    if (this.paused) {
+    if (this.paused || this.shopOpen) {
+      // Allow Esc to close shop into pause? keep shop open until closed
+      if (this.shopOpen && this.input.pausePressed) {
+        this.setShopOpen(false);
+      }
       this.input.endFrame();
       return;
     }
@@ -607,10 +738,11 @@ export class Game {
     const dashVec = this.input.getDashWorldDir(p.angle);
     const canDash = dashVec && this.dashStamina > 5 && this.dashCooldown <= 0;
 
+    const sm = p.speedMul || 1;
     if (canDash && dashVec) {
       if (!this.dashing) this.audio.dash();
       this.dashing = true;
-      const speed = 7.2 * dt;
+      const speed = 7.2 * sm * dt;
       this.dashStamina = Math.max(0, this.dashStamina - dt * 55);
       if (this.dashStamina <= 0) {
         this.dashCooldown = 0.45;
@@ -622,7 +754,7 @@ export class Game {
       p.invuln = Math.max(p.invuln, 0.05);
     } else {
       this.dashing = false;
-      const speed = (this.input.sprinting() ? 3.6 : 2.4) * dt;
+      const speed = (this.input.sprinting() ? 3.6 : 2.4) * sm * dt;
       const fx = Math.cos(p.angle);
       const fy = Math.sin(p.angle);
       const rx = -fy;
@@ -635,20 +767,32 @@ export class Game {
 
     if (p.attackCooldown > 0) p.attackCooldown -= dt;
     if (p.invuln > 0) p.invuln -= dt;
+    if (p.specialCooldown > 0) p.specialCooldown -= dt;
+    if (p.freezePulse > 0) p.freezePulse -= dt;
+    if (p.repelPulse > 0) p.repelPulse -= dt;
     if (this.hurtFlash > 0) this.hurtFlash -= dt;
     if (this.bossSilenceTimer > 0) this.bossSilenceTimer -= dt;
     p.momentum = Math.max(0, p.momentum - dt * 18);
-    p.voice = Math.min(100, p.voice + dt * 4);
+    p.voice = Math.min(p.maxVoice, p.voice + dt * 4);
+    if (p.regen > 0 && p.resolve < p.maxResolve) {
+      p.resolve = Math.min(p.maxResolve, p.resolve + p.regen * dt);
+    }
 
-    if (this.input.weaponSlot === 1) p.weapon = 'gavel';
-    if (this.input.weaponSlot === 2) p.weapon = 'mic';
-
-    this.handleFire();
-    if (this.input.interactPressed) this.tryInteract();
+    this.handleWeaponSwitch();
+    this.handleSpecials();
+    if (!isShopMapId(this.mapId)) {
+      this.handleFire();
+    }
+    if (this.input.interactPressed) {
+      if (isShopMapId(this.mapId)) this.setShopOpen(true);
+      else this.tryInteract();
+    }
     this.updateInteractPrompt();
 
-    this.updateEnemies(dt);
-    this.updateProjectiles(dt);
+    if (!isShopMapId(this.mapId)) {
+      this.updateEnemies(dt);
+      this.updateProjectiles(dt);
+    }
     this.updatePickups();
     this.updateFloaters(dt);
     this.updateParticles(dt);
@@ -668,6 +812,61 @@ export class Game {
   }
   setAltHeld(v: boolean) {
     this.altHeld = v;
+  }
+
+  private handleWeaponSwitch() {
+    const p = this.player;
+    const slots: WeaponId[] = ['gavel', 'mic', 'framing', 'logic', 'facts', 'wall', 'charisma'];
+    const slot = this.input.weaponSlot;
+    if (slot != null && slot >= 1 && slot <= 7) {
+      const w = slots[slot - 1]!;
+      if (p.ownedWeapons.includes(w)) p.weapon = w;
+    }
+  }
+
+  private handleSpecials() {
+    const p = this.player;
+    if (p.specialCooldown > 0) return;
+    // F = Truth Bomb, C = Freeze, V = Repel
+    if (this.input.keys.has('KeyF') && p.bombs > 0) {
+      p.bombs -= 1;
+      p.specialCooldown = 0.4;
+      this.meta.bombs = p.bombs;
+      this.audio.trumpTrain();
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (Math.hypot(e.x - p.x, e.y - p.y) < 3.2) this.damageEnemy(e, 55);
+      }
+      this.spawnParticles(p.x, p.y, '#ffd700', 24);
+      this.showToast('TRUTH BOMB!', 1.2);
+    } else if (this.input.keys.has('KeyC') && p.freezes > 0) {
+      p.freezes -= 1;
+      p.specialCooldown = 0.4;
+      this.meta.freezes = p.freezes;
+      this.audio.plaque();
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        if (Math.hypot(e.x - p.x, e.y - p.y) < 4) e.frozen = 2.8;
+      }
+      this.showToast('GAVEL FREEZE!', 1.2);
+    } else if (this.input.keys.has('KeyV') && p.repels > 0) {
+      p.repels -= 1;
+      p.specialCooldown = 0.4;
+      this.meta.repels = p.repels;
+      p.invuln = Math.max(p.invuln, 1.2);
+      this.audio.dash();
+      const fx = Math.cos(p.angle);
+      const fy = Math.sin(p.angle);
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const d = Math.hypot(e.x - p.x, e.y - p.y);
+        if (d < 3.5 && d > 0.01) {
+          e.x += ((e.x - p.x) / d) * 1.4 + fx * 0.3;
+          e.y += ((e.y - p.y) / d) * 1.4 + fy * 0.3;
+        }
+      }
+      this.showToast('REPELLANT PULSE!', 1.2);
+    }
   }
 
   private handleFire() {
@@ -869,6 +1068,11 @@ export class Game {
       e.bob += dt * 6;
       e.hurt = Math.max(0, e.hurt - dt);
       e.attackCd = Math.max(0, e.attackCd - dt);
+      e.rangedCd = Math.max(0, (e.rangedCd ?? 0) - dt);
+      if ((e.frozen ?? 0) > 0) {
+        e.frozen = (e.frozen ?? 0) - dt;
+        continue;
+      }
 
       if (e.kind === 'boss') {
         this.updateBoss(e, dt);
@@ -880,9 +1084,8 @@ export class Game {
       const dist = Math.hypot(dx, dy);
       const range = e.elite ? 10 : e.kind === 'libtard' ? 9 : 8;
 
-      // Libtards kite slightly (prefer mid range)
       let preferDist = 0.55;
-      if (e.kind === 'libtard' && dist < 2.2) preferDist = 2.0;
+      if (e.kind === 'libtard' && dist < 2.8) preferDist = 2.4;
 
       if (dist < range && dist > preferDist) {
         const sp = e.speed * dt * (e.hurt > 0 ? 0.4 : 1);
@@ -896,6 +1099,23 @@ export class Game {
         const ny = e.y - (dy / dist) * sp;
         if (!isSolid(this.map, nx, e.y)) e.x = nx;
         if (!isSolid(this.map, e.x, ny)) e.y = ny;
+      }
+
+      // Libtards: slow hashtag projectiles
+      if (e.kind === 'libtard' && dist < 9 && dist > 1.5 && (e.rangedCd ?? 0) <= 0) {
+        e.rangedCd = 1.8;
+        const sp = 3.2;
+        this.projectiles.push({
+          x: e.x,
+          y: e.y,
+          vx: (dx / dist) * sp,
+          vy: (dy / dist) * sp,
+          damage: Math.round((e.damage ?? 12) * 0.7),
+          life: 2.8,
+          kind: 'enemy_slow',
+          hostile: true,
+          radius: 0.28,
+        });
       }
 
       const hitRange = e.elite ? 0.75 : e.kind === 'woke' ? 0.8 : 0.7;
@@ -912,7 +1132,7 @@ export class Game {
     b.phase = b.hp < b.maxHp * 0.45 ? 2 : 1;
     const dx = p.x - b.x;
     const dy = p.y - b.y;
-    const dist = Math.hypot(dx, dy);
+    const dist = Math.hypot(dx, dy) || 1;
     if (dist > 1.2 && dist < 14) {
       const sp = (b.speed ?? 1) * (b.phase === 2 ? 1.25 : 1) * dt;
       const nx = b.x + (dx / dist) * sp;
@@ -924,6 +1144,14 @@ export class Game {
       b.attackCd = 0.95;
       this.hurtPlayer(b.damage ?? 22);
     }
+
+    // Distinct ranged patterns
+    b.rangedCd = (b.rangedCd ?? 1.5) - dt;
+    if ((b.rangedCd ?? 0) <= 0 && dist < 12) {
+      b.rangedCd = b.phase === 2 ? 1.1 : 1.7;
+      this.fireBossRanged(b, dx / dist, dy / dist, dist);
+    }
+
     b.spawnCd = (b.spawnCd ?? 4) - dt;
     if ((b.spawnCd ?? 0) <= 0 && this.bossSilenceTimer <= 0 && b.variant !== 'deepfake') {
       b.spawnCd = b.phase === 2 ? 4.2 : 6.5;
@@ -949,6 +1177,7 @@ export class Game {
             bob: 0,
             elite: false,
             damage: Math.round(stats.dmg * diff.dmgMul),
+            rangedCd: 1,
           });
           this.showToast(`${b.title ?? 'Boss'} summoned backup!`, 1.4);
         }
@@ -956,10 +1185,156 @@ export class Game {
     }
   }
 
+  private fireBossRanged(b: Enemy, nx: number, ny: number, dist: number) {
+    const dmg = Math.round((b.damage ?? 20) * 0.65);
+    const v = b.variant ?? 'manager';
+    if (v === 'manager') {
+      // Slow clipboard lob
+      this.projectiles.push({
+        x: b.x,
+        y: b.y,
+        vx: nx * 2.8,
+        vy: ny * 2.8,
+        damage: dmg,
+        life: 2.5,
+        kind: 'boss_clip',
+        hostile: true,
+        radius: 0.35,
+      });
+    } else if (v === 'hydra') {
+      // Fan of hashtags
+      for (let i = -2; i <= 2; i++) {
+        const a = Math.atan2(ny, nx) + i * 0.22;
+        this.projectiles.push({
+          x: b.x,
+          y: b.y,
+          vx: Math.cos(a) * 4.5,
+          vy: Math.sin(a) * 4.5,
+          damage: Math.round(dmg * 0.7),
+          life: 2,
+          kind: 'boss_hash',
+          hostile: true,
+          radius: 0.25,
+        });
+      }
+    } else if (v === 'autopen') {
+      // Fast ink bolts
+      this.projectiles.push({
+        x: b.x,
+        y: b.y,
+        vx: nx * 8,
+        vy: ny * 8,
+        damage: dmg + 4,
+        life: 1.2,
+        kind: 'boss_ink',
+        hostile: true,
+        radius: 0.2,
+      });
+    } else if (v === 'fraud') {
+      // Arc of ballots
+      for (let i = -1; i <= 1; i++) {
+        const a = Math.atan2(ny, nx) + i * 0.35;
+        this.projectiles.push({
+          x: b.x,
+          y: b.y,
+          vx: Math.cos(a) * 3.5,
+          vy: Math.sin(a) * 3.5,
+          damage: dmg,
+          life: 2.4,
+          kind: 'boss_ballot',
+          hostile: true,
+          radius: 0.3,
+        });
+      }
+    } else if (v === 'tribunal') {
+      // Sideways gavel waves
+      const px = -ny;
+      const py = nx;
+      for (const s of [-1, 1]) {
+        this.projectiles.push({
+          x: b.x + px * s * 0.4,
+          y: b.y + py * s * 0.4,
+          vx: nx * 5 + px * s * 1.2,
+          vy: ny * 5 + py * s * 1.2,
+          damage: dmg + 2,
+          life: 1.6,
+          kind: 'boss_gavel',
+          hostile: true,
+          radius: 0.32,
+        });
+      }
+    } else if (v === 'media') {
+      // Piercing laser shot
+      this.projectiles.push({
+        x: b.x,
+        y: b.y,
+        vx: nx * 12,
+        vy: ny * 12,
+        damage: dmg + 6,
+        life: 0.9,
+        kind: 'boss_laser',
+        hostile: true,
+        radius: 0.18,
+      });
+    } else if (v === 'swamp') {
+      // Homing-ish fog orbs (slow, slightly tracking via multiple)
+      for (let i = 0; i < 3; i++) {
+        const a = Math.atan2(ny, nx) + (i - 1) * 0.4;
+        this.projectiles.push({
+          x: b.x,
+          y: b.y,
+          vx: Math.cos(a) * 2.4,
+          vy: Math.sin(a) * 2.4,
+          damage: dmg,
+          life: 3,
+          kind: 'boss_fog',
+          hostile: true,
+          radius: 0.4,
+        });
+      }
+    } else if (v === 'deepfake') {
+      this.projectiles.push({
+        x: b.x,
+        y: b.y,
+        vx: nx * 6,
+        vy: ny * 6,
+        damage: dmg,
+        life: 1.5,
+        kind: 'boss_mirror',
+        hostile: true,
+        radius: 0.28,
+      });
+    } else {
+      this.projectiles.push({
+        x: b.x,
+        y: b.y,
+        vx: nx * 4,
+        vy: ny * 4,
+        damage: dmg,
+        life: 2,
+        kind: 'enemy_slow',
+        hostile: true,
+      });
+    }
+    void dist;
+  }
+
   private hurtPlayer(amount: number) {
     if (this.deathFx) return;
     const p = this.player;
-    p.resolve -= amount;
+    let dmg = amount;
+    if (p.shield > 0) {
+      const absorbed = Math.min(p.shield, dmg);
+      p.shield -= absorbed;
+      dmg -= absorbed;
+      this.spawnParticles(p.x, p.y, '#5dade2', 4);
+    }
+    if (dmg <= 0) {
+      this.audio.hit();
+      p.invuln = 0.35;
+      return;
+    }
+    p.resolve -= dmg;
     p.invuln = 0.6;
     p.momentum = 0;
     this.audio.hurt();
@@ -1015,6 +1390,7 @@ export class Game {
   }
 
   private updateProjectiles(dt: number) {
+    const p = this.player;
     for (const pr of this.projectiles) {
       pr.life -= dt;
       pr.x += pr.vx * dt;
@@ -1023,9 +1399,17 @@ export class Game {
         pr.life = 0;
         continue;
       }
+      if (pr.hostile) {
+        const hitR = pr.radius ?? 0.3;
+        if (Math.hypot(pr.x - p.x, pr.y - p.y) < hitR + 0.2 && p.invuln <= 0 && !this.dashing) {
+          this.hurtPlayer(pr.damage);
+          pr.life = 0;
+        }
+        continue;
+      }
       for (const e of this.enemies) {
         if (!e.alive) continue;
-        const r = e.kind === 'boss' ? (e.radius ?? 0.7) : 0.4;
+        const r = (e.kind === 'boss' ? (e.radius ?? 0.7) : 0.4) + (pr.radius ?? 0);
         if (Math.hypot(e.x - pr.x, e.y - pr.y) < r) {
           this.damageEnemy(e, pr.damage);
           pr.life = 0;
@@ -1033,7 +1417,7 @@ export class Game {
         }
       }
     }
-    this.projectiles = this.projectiles.filter((p) => p.life > 0);
+    this.projectiles = this.projectiles.filter((pr) => pr.life > 0);
   }
 
   private damageEnemy(e: Enemy, amount: number) {
@@ -1069,6 +1453,23 @@ export class Game {
     this.showConvert(line);
     this.spawnParticles(e.x, e.y, '#c41e3a', 18);
     this.spawnParticles(e.x, e.y, '#ffd700', 12);
+
+    // Occasional food drops
+    if (e.kind !== 'boss' && Math.random() < (e.elite ? 0.45 : 0.22)) {
+      const kind = Math.random() < 0.5 ? 'resolve' : 'voice';
+      const pos = findOpenSpawn(this.map, e.x, e.y);
+      if (pos) {
+        this.pickups.push({
+          kind: 'pickup',
+          x: pos.x,
+          y: pos.y,
+          item: kind,
+          taken: false,
+          flag: `drop_${this.dropSerial++}`,
+        });
+      }
+    }
+
     if (e.variant === 'deepfake') {
       this.deepfakeBeaten = true;
       this.showToast('Deepfake converted — truth prevails.', 3);
@@ -1085,13 +1486,13 @@ export class Game {
       if (item.taken) continue;
       if (Math.hypot(item.x - p.x, item.y - p.y) > 0.5) continue;
       item.taken = true;
-      this.addFlag(item.flag);
+      if (!item.flag.startsWith('drop_')) this.addFlag(item.flag);
       this.audio.pickup();
       if (item.item === 'resolve') {
-        p.resolve = Math.min(100, p.resolve + 35);
+        p.resolve = Math.min(p.maxResolve, p.resolve + 35);
         this.showToast('Cheeseburger — Resolve up!', 2);
       } else if (item.item === 'voice') {
-        p.voice = Math.min(100, p.voice + 40);
+        p.voice = Math.min(p.maxVoice, p.voice + 40);
         this.showToast('Diet Coke — Voice up!', 2);
       } else if (item.item === 'brand') {
         p.brand += 15;
@@ -1321,20 +1722,29 @@ export class Game {
 
     for (const pr of this.projectiles) {
       this.spriteCtx.clearRect(0, 0, 64, 64);
-      this.spriteCtx.fillStyle = '#00c2ff';
+      const color = pr.hostile
+        ? pr.kind === 'boss_laser'
+          ? '#ff3355'
+          : pr.kind === 'boss_fog'
+            ? '#2ecc71'
+            : '#e74c3c'
+        : pr.kind === 'logic'
+          ? '#f1c40f'
+          : pr.kind === 'frame'
+            ? '#9b59b6'
+            : pr.kind === 'facts'
+              ? '#ecf0f1'
+              : '#00c2ff';
+      this.spriteCtx.fillStyle = color;
       this.spriteCtx.beginPath();
-      this.spriteCtx.arc(32, 32, 14, 0, Math.PI * 2);
+      this.spriteCtx.arc(32, 32, pr.hostile ? 12 : 14, 0, Math.PI * 2);
       this.spriteCtx.fill();
-      this.spriteCtx.fillStyle = '#fff';
-      this.spriteCtx.font = '10px sans-serif';
-      this.spriteCtx.textAlign = 'center';
-      this.spriteCtx.fillText('MIC', 32, 36);
       sprites.push({
         x: pr.x,
         y: pr.y,
         dist: Math.hypot(pr.x - p.x, pr.y - p.y),
         canvas: cloneCanvas(this.spriteBuf),
-        scale: 0.3,
+        scale: pr.hostile ? 0.28 : 0.3,
       });
     }
 
@@ -1469,17 +1879,19 @@ export class Game {
     }
 
     // HUD
-    const res = Math.max(0, Math.min(100, p.resolve));
-    this.resolveFill.style.width = `${res}%`;
-    this.voiceFill.style.width = `${Math.max(0, p.voice)}%`;
+    const maxR = p.maxResolve || 100;
+    const resPct = Math.max(0, Math.min(100, (p.resolve / maxR) * 100));
+    const res = p.resolve;
+    this.resolveFill.style.width = `${resPct}%`;
+    this.voiceFill.style.width = `${Math.max(0, (p.voice / (p.maxVoice || 100)) * 100)}%`;
     this.resolvePct.textContent = String(Math.round(res));
-    this.resolvePct.classList.toggle('low', res <= 50 && res > 25);
-    this.resolvePct.classList.toggle('critical', res <= 25);
-    this.resolveMeter.classList.toggle('low', res <= 50 && res > 25);
-    this.resolveMeter.classList.toggle('critical', res <= 25);
-    if (res > 70) this.resolveFace.textContent = '😎';
-    else if (res > 40) this.resolveFace.textContent = '😐';
-    else if (res > 20) this.resolveFace.textContent = '😤';
+    this.resolvePct.classList.toggle('low', resPct <= 50 && resPct > 25);
+    this.resolvePct.classList.toggle('critical', resPct <= 25);
+    this.resolveMeter.classList.toggle('low', resPct <= 50 && resPct > 25);
+    this.resolveMeter.classList.toggle('critical', resPct <= 25);
+    if (resPct > 70) this.resolveFace.textContent = '😎';
+    else if (resPct > 40) this.resolveFace.textContent = '😐';
+    else if (resPct > 20) this.resolveFace.textContent = '😤';
     else this.resolveFace.textContent = '😵';
 
     this.hurtVignette.classList.remove('hidden', 'active', 'critical');
@@ -1491,10 +1903,22 @@ export class Game {
     this.dashFill.classList.toggle('ready', this.dashStamina >= 95 && this.dashCooldown <= 0);
     this.dashFill.classList.toggle('active', this.dashing);
 
-    this.weaponName.textContent = weaponLabel(p.weapon);
+    this.weaponName.textContent = weaponLabel(p.weapon, p.weaponLevel[p.weapon] ?? 0);
     const keys = [p.hasRedKey ? '🔑R' : '', p.hasBlueKey ? '🔑B' : ''].filter(Boolean).join(' ');
-    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · ${this.zone.label.toUpperCase()} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand} · ☠${this.levelDeaths}${keys ? ' · ' + keys : ''}${this.dashing ? ' · DASH' : ''}`;
-    if (this.locationEl) this.locationEl.textContent = `${this.map.name} · ${this.zone.ambientLabel}`;
+    const inv = [
+      p.shield > 0 ? `🛡${Math.ceil(p.shield)}` : '',
+      p.bombs > 0 ? `💣${p.bombs}` : '',
+      p.freezes > 0 ? `❄${p.freezes}` : '',
+      p.repels > 0 ? `💨${p.repels}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · ${this.zone.label.toUpperCase()} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand} · ☠${this.levelDeaths}${keys ? ' · ' + keys : ''}${inv ? ' · ' + inv : ''}${this.dashing ? ' · DASH' : ''}${isShopMapId(this.mapId) ? ' · SHOP' : ''}`;
+    if (this.locationEl) {
+      this.locationEl.textContent = isShopMapId(this.mapId)
+        ? `${this.map.name} · Press E for shop`
+        : `${this.map.name} · ${this.zone.ambientLabel}`;
+    }
   }
 
   private drawWeapon() {
@@ -1519,23 +1943,42 @@ export class Game {
     ctx.fillStyle = '#ffd700';
     ctx.fillRect(baseX + 6, baseY - 28, 14, 5);
 
-    if (this.player.weapon === 'gavel') {
+    const wpn = this.player.weapon;
+    if (wpn === 'gavel') {
       ctx.fillStyle = '#5c3317';
       ctx.fillRect(baseX + 18, baseY - 70, 10, 36);
       ctx.fillStyle = '#8b5a2b';
       ctx.fillRect(baseX + 8, baseY - 78, 36, 16);
       ctx.fillStyle = '#ffd700';
       ctx.fillRect(baseX + 12, baseY - 74, 8, 8);
-    } else {
+    } else if (wpn === 'mic' || wpn === 'charisma') {
       ctx.fillStyle = '#333';
       ctx.fillRect(baseX + 24, baseY - 72, 6, 40);
-      ctx.fillStyle = '#222';
+      ctx.fillStyle = wpn === 'charisma' ? '#c41e3a' : '#222';
       ctx.beginPath();
       ctx.arc(baseX + 27, baseY - 78, 12, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = '#00c2ff';
+      ctx.strokeStyle = wpn === 'charisma' ? '#ffd700' : '#00c2ff';
       ctx.lineWidth = 2;
       ctx.stroke();
+    } else if (wpn === 'framing') {
+      ctx.fillStyle = '#9b59b6';
+      ctx.fillRect(baseX + 20, baseY - 75, 22, 28);
+      ctx.strokeStyle = '#ffd700';
+      ctx.strokeRect(baseX + 20, baseY - 75, 22, 28);
+    } else if (wpn === 'logic') {
+      ctx.fillStyle = '#f1c40f';
+      ctx.fillRect(baseX + 22, baseY - 80, 8, 50);
+    } else if (wpn === 'facts') {
+      ctx.fillStyle = '#ecf0f1';
+      ctx.fillRect(baseX + 14, baseY - 70, 30, 36);
+      ctx.strokeStyle = '#333';
+      ctx.strokeRect(baseX + 14, baseY - 70, 30, 36);
+    } else {
+      ctx.fillStyle = '#0a1f44';
+      ctx.fillRect(baseX + 10, baseY - 75, 40, 40);
+      ctx.strokeStyle = '#ffd700';
+      ctx.strokeRect(baseX + 10, baseY - 75, 40, 40);
     }
   }
 }

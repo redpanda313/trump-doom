@@ -28,7 +28,7 @@ export const ep1Boss: GameMap = {
   id: 'ep1_boss',
   name: 'Manager of Karens',
   episode: 1,
-  nextMapId: 'ep2_quad',
+  nextMapId: 'shop_1',
   width: layout.width,
   height: layout.height,
   grid: layout.grid,

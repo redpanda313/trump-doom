@@ -540,3 +540,161 @@ h1 {
   color: #6a7380;
   line-height: 1.4;
 }
+
+/* Shop */
+.shop-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 8, 20, 0.82);
+  backdrop-filter: blur(5px);
+  pointer-events: auto;
+}
+
+.shop-card {
+  width: min(520px, 94vw);
+  max-height: 88vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #1a1040 0%, #0a1f44 100%);
+  border: 2px solid var(--gold);
+  padding: 1.1rem 1.2rem 1rem;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+.shop-card h2 {
+  color: var(--gold);
+  text-align: center;
+  letter-spacing: 0.14em;
+  font-size: 1.15rem;
+}
+
+.shop-sub {
+  text-align: center;
+  color: #9ab;
+  font-size: 0.8rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.shop-sub span {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.shop-list {
+  overflow-y: auto;
+  flex: 1;
+  max-height: 52vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-right: 0.25rem;
+}
+
+.shop-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  padding: 0.55rem 0.7rem;
+}
+
+.shop-item-name {
+  font-size: 0.82rem;
+  color: #f5f0e0;
+  font-weight: 600;
+}
+
+.shop-item-desc {
+  grid-column: 1;
+  font-size: 0.68rem;
+  color: #8a95a5;
+}
+
+.shop-item button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  appearance: none;
+  border: 1px solid var(--gold);
+  background: #1a3a6e;
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shop-item button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #555;
+  color: #888;
+}
+
+.shop-item.cat-weapon {
+  border-color: rgba(0, 194, 255, 0.35);
+}
+
+.shop-item.cat-unlock {
+  border-color: rgba(46, 204, 113, 0.4);
+}
+
+.shop-item.cat-consumable {
+  border-color: rgba(231, 76, 60, 0.35);
+}
+
+.shop-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.shop-actions button {
+  appearance: none;
+  border: 2px solid var(--gold);
+  background: linear-gradient(180deg, #1a3a6e, #0a1f44);
+  color: var(--gold);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+#btn-shop-leave {
+  border-color: #82e0aa;
+  color: #d5f5e3;
+  background: linear-gradient(180deg, #1e4d2b, #0f2a18);
+}
+
+.shop-hint {
+  margin-top: 0.65rem;
+  text-align: center;
+  font-size: 0.62rem;
+  color: #6a7380;
+}
+
+.extra-meters {
+  position: absolute;
+  left: 1rem;
+  bottom: 5.5rem;
+  font-size: 0.65rem;
+  color: #c5cdd8;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+
+.extra-meters .shield-row {
+  color: #5dade2;
+  margin-bottom: 0.2rem;
+}

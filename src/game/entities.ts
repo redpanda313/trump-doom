@@ -1,11 +1,20 @@
-export type WeaponId = 'gavel' | 'mic';
+export type WeaponId =
+  | 'gavel'
+  | 'mic'
+  | 'framing'
+  | 'logic'
+  | 'facts'
+  | 'wall'
+  | 'charisma';
 
 export interface PlayerState {
   x: number;
   y: number;
   angle: number;
   resolve: number;
+  maxResolve: number;
   voice: number;
+  maxVoice: number;
   brand: number;
   momentum: number;
   hasRedKey: boolean;
@@ -15,6 +24,19 @@ export interface PlayerState {
   invuln: number;
   plaquesRead: Set<string>;
   conversions: number;
+  shield: number;
+  maxShield: number;
+  /** Move speed mult from meta */
+  speedMul: number;
+  regen: number;
+  bombs: number;
+  freezes: number;
+  repels: number;
+  ownedWeapons: WeaponId[];
+  weaponLevel: Record<WeaponId, number>;
+  freezePulse: number;
+  repelPulse: number;
+  specialCooldown: number;
 }
 
 export type EnemyKind = 'karen' | 'libtard' | 'woke' | 'bureaucrat' | 'boss';
@@ -31,18 +53,18 @@ export interface Foe {
   alive: boolean;
   bob: number;
   elite: boolean;
-  /** Boss only */
   variant?: string;
   spawnCd?: number;
   phase?: number;
   title?: string;
   damage?: number;
   radius?: number;
+  /** Ranged cadence for bosses / libtards */
+  rangedCd?: number;
+  frozen?: number;
 }
 
 export type Enemy = Foe;
-export type BossManager = Foe; // compat alias
-export type KarenEnemy = Foe;
 
 export interface PlaqueEntity {
   kind: 'plaque';
@@ -111,6 +133,22 @@ export interface Particle {
   size: number;
 }
 
+export type ProjectileKind =
+  | 'mic'
+  | 'bubble'
+  | 'frame'
+  | 'logic'
+  | 'facts'
+  | 'enemy_slow'
+  | 'boss_clip'
+  | 'boss_hash'
+  | 'boss_ink'
+  | 'boss_ballot'
+  | 'boss_gavel'
+  | 'boss_laser'
+  | 'boss_fog'
+  | 'boss_mirror';
+
 export interface Projectile {
   x: number;
   y: number;
@@ -118,7 +156,9 @@ export interface Projectile {
   vy: number;
   damage: number;
   life: number;
-  kind: 'mic' | 'bubble';
+  kind: ProjectileKind;
+  hostile?: boolean;
+  radius?: number;
 }
 
 export const CONVERSION_LINES = [
@@ -139,7 +179,9 @@ export function createDefaultPlayer(spawn: { x: number; y: number; angle: number
     y: spawn.y,
     angle: spawn.angle,
     resolve: 100,
+    maxResolve: 100,
     voice: 100,
+    maxVoice: 100,
     brand: 0,
     momentum: 0,
     hasRedKey: false,
@@ -149,6 +191,26 @@ export function createDefaultPlayer(spawn: { x: number; y: number; angle: number
     invuln: 0,
     plaquesRead: new Set(),
     conversions: 0,
+    shield: 0,
+    maxShield: 0,
+    speedMul: 1,
+    regen: 0,
+    bombs: 0,
+    freezes: 0,
+    repels: 0,
+    ownedWeapons: ['gavel', 'mic'],
+    weaponLevel: {
+      gavel: 0,
+      mic: 0,
+      framing: 0,
+      logic: 0,
+      facts: 0,
+      wall: 0,
+      charisma: 0,
+    },
+    freezePulse: 0,
+    repelPulse: 0,
+    specialCooldown: 0,
   };
 }
 

@@ -40,6 +40,9 @@ export class Input {
       if (e.code === 'Digit2') this.weaponSlot = 2;
       if (e.code === 'Digit3') this.weaponSlot = 3;
       if (e.code === 'Digit4') this.weaponSlot = 4;
+      if (e.code === 'Digit5') this.weaponSlot = 5;
+      if (e.code === 'Digit6') this.weaponSlot = 6;
+      if (e.code === 'Digit7') this.weaponSlot = 7;
       if (e.code === 'KeyQ') this.altFirePressed = true;
       if (e.code === 'Escape' || e.code === 'Tab') {
         e.preventDefault();

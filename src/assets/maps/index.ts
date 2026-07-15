@@ -20,6 +20,7 @@ import {
   ep7Swamp,
   ep7Oval,
 } from './late_campaign';
+import { SHOP_MAPS } from './shop';
 
 export const MAP_REGISTRY: Record<string, GameMap> = {
   [ep0Basement.id]: ep0Basement,
@@ -42,6 +43,10 @@ export const MAP_REGISTRY: Record<string, GameMap> = {
   [ep7Swamp.id]: ep7Swamp,
   [ep7Oval.id]: ep7Oval,
 };
+
+for (const s of SHOP_MAPS) {
+  MAP_REGISTRY[s.id] = s;
+}
 
 export const CAMPAIGN_START = ep0Basement.id;
 
