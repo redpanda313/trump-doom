@@ -597,11 +597,24 @@ export class Game {
       }
     }
     if (p.hasRedKey) {
-      const cx = Math.floor(p.x + Math.cos(p.angle));
-      const cy = Math.floor(p.y + Math.sin(p.angle));
-      if (this.map.grid[cy * this.map.width + cx] === 3) {
-        this.interactPrompt = 'E — Unlock with Red Tie Key';
+      for (const [dx, dy] of [
+        [Math.cos(p.angle), Math.sin(p.angle)],
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const cx = Math.floor(p.x + (dx as number));
+        const cy = Math.floor(p.y + (dy as number));
+        if (cx < 0 || cy < 0 || cx >= this.map.width || cy >= this.map.height) continue;
+        if (this.map.grid[cy * this.map.width + cx] === 3) {
+          this.interactPrompt = 'E — Unlock with Red Tie Key';
+          return;
+        }
       }
+    }
+    if (this.exit && Math.hypot(this.exit.x - p.x, this.exit.y - p.y) < 2.2) {
+      this.interactPrompt = 'Walk into EXIT pad to leave the basement';
     }
   }
 
@@ -658,19 +671,35 @@ export class Game {
       if (e.type !== 'secret_trigger') continue;
       const flag = e.flag ?? 'secret';
       if (this.hasFlag(flag)) continue;
-      if (Math.hypot(e.x - p.x, e.y - p.y) < 1.3) {
-        setCell(this.map, e.wallX, e.wallY, 0);
+      if (Math.hypot(e.x - p.x, e.y - p.y) < 1.5) {
+        // Open every cell tied to this secret flag (multi-tile doors)
+        for (const s of this.map.entities) {
+          if (s.type === 'secret_trigger' && (s.flag ?? 'secret') === flag) {
+            setCell(this.map, s.wallX, s.wallY, 0);
+          }
+        }
         this.addFlag(flag);
         this.audio.plaque();
-        this.showToast('Secret opened — tremendous room.', 3);
+        this.showToast('Secret opened — tremendous room!', 3);
         this.saveGame();
         return;
       }
     }
     if (p.hasRedKey) {
-      const cx = Math.floor(p.x + Math.cos(p.angle));
-      const cy = Math.floor(p.y + Math.sin(p.angle));
-      if (this.map.grid[cy * this.map.width + cx] === 3) {
+      // Face door, or stand adjacent — more forgiving than exact look cell
+      const candidates: [number, number][] = [
+        [Math.floor(p.x + Math.cos(p.angle)), Math.floor(p.y + Math.sin(p.angle))],
+        [Math.floor(p.x + Math.cos(p.angle) * 1.2), Math.floor(p.y + Math.sin(p.angle) * 1.2)],
+        [Math.floor(p.x) + 1, Math.floor(p.y)],
+        [Math.floor(p.x) - 1, Math.floor(p.y)],
+        [Math.floor(p.x), Math.floor(p.y) + 1],
+        [Math.floor(p.x), Math.floor(p.y) - 1],
+      ];
+      const nearDoor = candidates.some(([cx, cy]) => {
+        if (cx < 0 || cy < 0 || cx >= this.map.width || cy >= this.map.height) return false;
+        return this.map.grid[cy * this.map.width + cx] === 3;
+      });
+      if (nearDoor) {
         for (let y = 0; y < this.map.height; y++) {
           for (let x = 0; x < this.map.width; x++) {
             if (this.map.grid[y * this.map.width + x] === 3) setCell(this.map, x, y, 0);
@@ -883,7 +912,8 @@ export class Game {
     const boss = this.enemies.find((e) => e.kind === 'boss_manager');
     if (boss && boss.alive) return;
 
-    if (Math.hypot(this.exit.x - this.player.x, this.exit.y - this.player.y) < 0.65) {
+    // Generous radius — exit is a pad, not a pixel hunt
+    if (Math.hypot(this.exit.x - this.player.x, this.exit.y - this.player.y) < 1.15) {
       this.mapComplete = true;
       if (!this.completedMaps.includes(this.mapId)) {
         this.completedMaps.push(this.mapId);
