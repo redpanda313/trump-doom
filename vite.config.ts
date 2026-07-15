@@ -4,8 +4,14 @@ export default defineConfig({
   root: '.',
   publicDir: 'public',
   server: {
-    port: 5173,
+    // 5173 is often taken by other Vite apps on this machine
+    port: 5180,
+    strictPort: true,
     open: true,
+  },
+  preview: {
+    port: 4180,
+    strictPort: true,
   },
   build: {
     outDir: 'dist',

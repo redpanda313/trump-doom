@@ -34,11 +34,14 @@ Weapons are debates, framing, logic, and mic drops — not bullets. Enemies are 
 ## Play (when built)
 
 ```bash
+cd ~/trump-doom
 npm install
 npm run dev
 ```
 
-Open the local URL Vite prints (usually `http://localhost:5173`).
+Open the URL Vite prints — **http://localhost:5180** (not 5173; that port is often used by other projects).
+
+If you see a blank white page on 5173, you are almost certainly hitting a *different* app. Use **5180** for Trump Doom.
 
 ---
 

@@ -3,6 +3,7 @@
  * Classic 2.5D raycaster · Adult Legend Donald · Trump-Train conversions
  */
 
+import './styles.css';
 import { Game } from './game/game';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
