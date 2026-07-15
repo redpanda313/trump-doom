@@ -17,8 +17,10 @@ export interface PlayerState {
   conversions: number;
 }
 
-export interface KarenEnemy {
-  kind: 'karen';
+export type EnemyKind = 'karen' | 'libtard' | 'woke' | 'bureaucrat' | 'boss';
+
+export interface Foe {
+  kind: EnemyKind;
   x: number;
   y: number;
   hp: number;
@@ -29,24 +31,18 @@ export interface KarenEnemy {
   alive: boolean;
   bob: number;
   elite: boolean;
+  /** Boss only */
+  variant?: string;
+  spawnCd?: number;
+  phase?: number;
+  title?: string;
+  damage?: number;
+  radius?: number;
 }
 
-export interface BossManager {
-  kind: 'boss_manager';
-  x: number;
-  y: number;
-  hp: number;
-  maxHp: number;
-  speed: number;
-  hurt: number;
-  attackCd: number;
-  spawnCd: number;
-  alive: boolean;
-  bob: number;
-  phase: number;
-}
-
-export type Enemy = KarenEnemy | BossManager;
+export type Enemy = Foe;
+export type BossManager = Foe; // compat alias
+export type KarenEnemy = Foe;
 
 export interface PlaqueEntity {
   kind: 'plaque';
@@ -93,7 +89,6 @@ export interface PhoneEntity {
   openCells?: { x: number; y: number }[];
   message: string;
   used: boolean;
-  /** Cooldown for re-usable silence phones */
   cooldown: number;
 }
 
@@ -155,4 +150,27 @@ export function createDefaultPlayer(spawn: { x: number; y: number; angle: number
     plaquesRead: new Set(),
     conversions: 0,
   };
+}
+
+export function bossMeta(variant: string): { title: string; hp: number; speed: number; dmg: number } {
+  switch (variant) {
+    case 'manager':
+      return { title: 'MANAGER OF KARENS', hp: 420, speed: 0.9, dmg: 22 };
+    case 'hydra':
+      return { title: 'CANCEL CULTURE HYDRA', hp: 520, speed: 1.0, dmg: 24 };
+    case 'autopen':
+      return { title: 'THE AUTOPEN', hp: 600, speed: 0.75, dmg: 26 };
+    case 'fraud':
+      return { title: 'ELECTION FRAUD', hp: 680, speed: 1.05, dmg: 28 };
+    case 'tribunal':
+      return { title: 'ROGUE JUDGE TRIBUNAL', hp: 750, speed: 0.85, dmg: 30 };
+    case 'media':
+      return { title: 'MEDIA LEVIATHAN', hp: 820, speed: 0.95, dmg: 32 };
+    case 'swamp':
+      return { title: 'THE SWAMP', hp: 1000, speed: 1.0, dmg: 34 };
+    case 'deepfake':
+      return { title: 'DEEPFAKE DONALD', hp: 400, speed: 1.2, dmg: 20 };
+    default:
+      return { title: 'NARRATIVE DEMON', hp: 500, speed: 0.9, dmg: 22 };
+  }
 }

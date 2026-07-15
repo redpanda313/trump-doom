@@ -17,8 +17,8 @@ Weapons are debates, framing, logic, and mic drops — not bullets. Enemies are 
 | Milestone | Description |
 |-----------|-------------|
 | M0 | Repo, GDD, shell |
-| **M1** | **Ep 0 raycaster · Gavel + Mic · Karens → Trump-Train · plaques** |
-| M2+ | Ep 1, bosses, progression |
+| **M1** | Ep 0 vertical slice |
+| **Campaign** | **Ep 0–7 full path · multi-track music · 6 endings · death ladder** |
 
 ### Vision (locked)
 - **Tone:** Mythic self-legend (Doomguy of destiny)

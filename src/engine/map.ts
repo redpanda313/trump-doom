@@ -2,7 +2,16 @@
 
 export type WallId = number;
 
-/** 0 = empty. Positive = solid wall texture id. */
+export type BossVariant =
+  | 'manager'
+  | 'hydra'
+  | 'autopen'
+  | 'fraud'
+  | 'tribunal'
+  | 'media'
+  | 'swamp'
+  | 'deepfake';
+
 export interface GameMap {
   id: string;
   name: string;
@@ -13,15 +22,17 @@ export interface GameMap {
   ceilingColor: string;
   spawn: { x: number; y: number; angle: number };
   entities: MapEntity[];
-  /** Next map id when exit is taken (campaign chain). */
   nextMapId?: string | null;
-  /** Shown on episode clear / save. */
   episode?: number;
 }
 
 export type MapEntity =
   | { type: 'karen'; x: number; y: number; elite?: boolean }
-  | { type: 'boss_manager'; x: number; y: number }
+  | { type: 'libtard'; x: number; y: number }
+  | { type: 'woke'; x: number; y: number }
+  | { type: 'bureaucrat'; x: number; y: number }
+  | { type: 'boss'; variant: BossVariant | string; x: number; y: number }
+  | { type: 'boss_manager'; x: number; y: number } // legacy alias → manager
   | { type: 'plaque'; x: number; y: number; title: string; text: string; id: string }
   | { type: 'pickup'; x: number; y: number; kind: 'resolve' | 'voice' | 'brand' | 'key_red' | 'key_blue' }
   | { type: 'exit'; x: number; y: number }
@@ -30,7 +41,6 @@ export type MapEntity =
       type: 'button';
       x: number;
       y: number;
-      /** Opens these cells (set to 0). */
       openCells: { x: number; y: number }[];
       flag: string;
       label: string;
@@ -41,7 +51,6 @@ export type MapEntity =
       y: number;
       flag: string;
       label: string;
-      /** 'open' opens cells; 'silence' pauses boss adds; 'toast' only message */
       effect: 'open' | 'silence' | 'toast';
       openCells?: { x: number; y: number }[];
       message: string;
@@ -72,14 +81,13 @@ export function cloneMap(src: GameMap): GameMap {
   };
 }
 
-/** Helper: build grid from string rows (digits 0-9, letters A-F = 10-15). */
 export function gridFromStrings(rows: string[]): { width: number; height: number; grid: WallId[] } {
   const height = rows.length;
   const width = rows[0]!.length;
   const grid: WallId[] = [];
   for (let y = 0; y < height; y++) {
     const row = rows[y]!;
-    if (row.length !== width) throw new Error(`Map row ${y} width mismatch`);
+    if (row.length !== width) throw new Error(`Map row ${y} width mismatch: ${row.length} vs ${width}`);
     for (let x = 0; x < width; x++) {
       const ch = row[x]!;
       if (ch === '.') grid.push(0);

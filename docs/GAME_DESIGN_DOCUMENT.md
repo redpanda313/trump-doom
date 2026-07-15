@@ -469,10 +469,22 @@ Each tree ~8 nodes. Soft cap encourages hybrid builds.
 | Secret Briefcase | Random mod chip |
 
 ### 9.4 Difficulty
-- **Stable Genius** — Normal  
-- **Very Stable Genius** — Hard (less ammo, smarter mobs)  
-- **Covfefe** — Nightmare modifiers  
-- **You’re Fired** — One-hit Resolve (optional challenge)
+- **Stable Genius** — Normal (default campaign scaling by episode)  
+- **Very Stable Genius** — Hard (less ammo, smarter mobs) — future toggle  
+- **Covfefe** — Nightmare modifiers — future toggle  
+- **You’re Fired** — One-hit Resolve (optional challenge) — future  
+
+### 9.5 Death Penalty Ladder (LOCKED extension)
+
+Original GDD did **not** specify death consequences beyond Resolve loss. Creator-approved arcade ladder:
+
+| Death # since last level clear | Result |
+|--------------------------------|--------|
+| **1st** | Replay **same level** (map flags reset; meta progress kept) |
+| **2nd+** | Restart **section** (first map of the episode) |
+| On **level clear** | Death counter **resets to 0** |
+
+Section restarts this run are tracked for the **Very Stable Legend** ending.
 
 ---
 

@@ -65,6 +65,23 @@ export const ep1Parking: GameMap = {
     { type: 'pickup', x: 20.5, y: 2.5, kind: 'resolve' },
     { type: 'pickup', x: 3.5, y: 11.5, kind: 'voice' },
     { type: 'pickup', x: 15.5, y: 15.5, kind: 'brand' },
+    {
+      type: 'secret_trigger',
+      x: 20.5,
+      y: 8.5,
+      wallX: 21,
+      wallY: 9,
+      flag: 'ep1_park_s1',
+    },
+    {
+      type: 'secret_trigger',
+      x: 3.5,
+      y: 5.5,
+      wallX: 3,
+      wallY: 4,
+      flag: 'ep1_park_s2',
+    },
+    { type: 'pickup', x: 4.5, y: 5.5, kind: 'brand' },
     { type: 'exit', x: 9.5, y: 15.5 },
   ],
 };

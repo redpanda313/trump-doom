@@ -28,7 +28,7 @@ export const ep1Boss: GameMap = {
   id: 'ep1_boss',
   name: 'Manager of Karens',
   episode: 1,
-  nextMapId: null, // end of current content — campaign continue later
+  nextMapId: 'ep2_quad',
   width: layout.width,
   height: layout.height,
   grid: layout.grid,
@@ -53,7 +53,7 @@ export const ep1Boss: GameMap = {
       effect: 'silence',
       message: 'Line jammed — reinforcements delayed!',
     },
-    { type: 'boss_manager', x: 9, y: 3.5 },
+    { type: 'boss', variant: 'manager', x: 9, y: 3.5 },
     { type: 'karen', x: 4.5, y: 8.5 },
     { type: 'karen', x: 13.5, y: 8.5 },
     { type: 'pickup', x: 2.5, y: 13.5, kind: 'resolve' },

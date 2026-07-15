@@ -4,19 +4,18 @@ import { Input } from '../engine/input';
 import { Raycaster, setAngle, type SpriteDraw } from '../engine/raycaster';
 import {
   createWallTextures,
-  drawKarenSprite,
   drawPlaqueSprite,
   drawPickupSprite,
   drawExitSprite,
   drawButtonSprite,
   drawPhoneSprite,
   drawBossSprite,
+  drawFoeSprite,
 } from '../engine/textures';
 import { GameAudio } from '../engine/audio';
 import {
   type PlayerState,
   type Enemy,
-  type BossManager,
   type PlaqueEntity,
   type PickupEntity,
   type ExitEntity,
@@ -27,11 +26,19 @@ import {
   type Projectile,
   randomConversionLine,
   createDefaultPlayer,
+  bossMeta,
 } from './entities';
 import { tryPrimaryFire, tryAltFire, weaponLabel } from './weapons';
-import { getMapTemplate, CAMPAIGN_START } from '../assets/maps';
+import { getMapTemplate, CAMPAIGN_START, countCampaignPlaques } from '../assets/maps';
 import { type SaveData, writeSave, loadSave, clearSave } from './save';
 import { BASE_LOOK_SENS } from './settings';
+import {
+  sectionForMap,
+  difficultyForEpisode,
+  chooseEp7Approach,
+  evaluateEnding,
+  type EndingResult,
+} from './campaign';
 
 const RENDER_W = 320;
 const RENDER_H = 200;
@@ -79,6 +86,10 @@ export class Game {
   private pendingNextMap: string | null = null;
   private autosaveTimer = 0;
   private interactPrompt = '';
+  private levelDeaths = 0;
+  private sectionRestarts = 0;
+  private deepfakeBeaten = false;
+  private ending: EndingResult | null = null;
 
   private resolveFill: HTMLElement;
   private voiceFill: HTMLElement;
@@ -164,6 +175,9 @@ export class Game {
       conversions: p.conversions,
     };
     this.prevResolve = this.player.resolve;
+    this.levelDeaths = save.levelDeaths ?? 0;
+    this.sectionRestarts = save.sectionRestarts ?? 0;
+    this.deepfakeBeaten = save.deepfakeBeaten ?? false;
   }
 
   private wirePauseMenu() {
@@ -248,7 +262,7 @@ export class Game {
   private saveGame() {
     if (this.campaignComplete) return;
     const data: SaveData = {
-      version: 1,
+      version: 2,
       mapId: this.mapId,
       player: {
         x: this.player.x,
@@ -267,6 +281,9 @@ export class Game {
       mapFlags: { ...this.mapFlags },
       locationLabel: this.map.name,
       savedAt: Date.now(),
+      levelDeaths: this.levelDeaths,
+      sectionRestarts: this.sectionRestarts,
+      deepfakeBeaten: this.deepfakeBeaten,
     };
     writeSave(data);
   }
@@ -284,37 +301,70 @@ export class Game {
     this.pendingNextMap = null;
     this.transitionTimer = 0;
 
+    const diff = difficultyForEpisode(this.map.episode ?? 0);
     let pi = 0;
     for (const e of this.map.entities) {
-      if (e.type === 'karen') {
-        const elite = !!e.elite;
+      if (e.type === 'karen' || e.type === 'libtard' || e.type === 'woke' || e.type === 'bureaucrat') {
+        const elite = e.type === 'karen' && !!e.elite;
+        let baseHp = 60;
+        let baseSp = 1.4;
+        let dmg = 12;
+        if (e.type === 'libtard') {
+          baseHp = 48;
+          baseSp = 1.75;
+          dmg = 14;
+        } else if (e.type === 'woke') {
+          baseHp = 90;
+          baseSp = 1.15;
+          dmg = 16;
+        } else if (e.type === 'bureaucrat') {
+          baseHp = 120;
+          baseSp = 0.95;
+          dmg = 15;
+        }
+        if (elite) {
+          baseHp = 110;
+          baseSp = 1.2;
+          dmg = 18;
+        }
+        const hp = Math.round(baseHp * diff.hpMul);
         this.enemies.push({
-          kind: 'karen',
+          kind: e.type === 'karen' ? 'karen' : e.type,
           x: e.x,
           y: e.y,
-          hp: elite ? 110 : 60,
-          maxHp: elite ? 110 : 60,
-          speed: elite ? 1.15 : 1.4,
+          hp,
+          maxHp: hp,
+          speed: baseSp * diff.speedMul,
           hurt: 0,
           attackCd: 0,
           alive: true,
           bob: Math.random() * Math.PI * 2,
           elite,
+          damage: Math.round(dmg * diff.dmgMul),
+          radius: 0.4,
         });
-      } else if (e.type === 'boss_manager') {
+      } else if (e.type === 'boss' || e.type === 'boss_manager') {
+        const variant = e.type === 'boss_manager' ? 'manager' : e.variant;
+        const meta = bossMeta(variant);
+        const hp = Math.round(meta.hp * (0.85 + (this.map.episode ?? 0) * 0.05));
         this.enemies.push({
-          kind: 'boss_manager',
+          kind: 'boss',
+          variant,
+          title: meta.title,
           x: e.x,
           y: e.y,
-          hp: 420,
-          maxHp: 420,
-          speed: 0.9,
+          hp,
+          maxHp: hp,
+          speed: meta.speed,
           hurt: 0,
           attackCd: 0,
-          spawnCd: 3,
+          spawnCd: 3.5,
           alive: true,
           bob: 0,
           phase: 1,
+          elite: false,
+          damage: meta.dmg,
+          radius: 0.7,
         });
       } else if (e.type === 'plaque') {
         this.plaques.push({
@@ -387,19 +437,27 @@ export class Game {
     }
   }
 
-  private loadMap(id: string, atSpawn = true) {
+  private loadMap(id: string, atSpawn = true, heal = true) {
     this.mapId = id;
     this.map = cloneMap(getMapTemplate(id));
     if (atSpawn) {
       this.player.x = this.map.spawn.x;
       this.player.y = this.map.spawn.y;
       this.player.angle = this.map.spawn.angle;
-      this.player.hasRedKey = false; // keys are per-map for doors in that map
-      this.player.resolve = Math.min(100, this.player.resolve + 15);
-      this.player.voice = Math.min(100, this.player.voice + 25);
+      this.player.hasRedKey = false;
+      this.player.hasBlueKey = false;
+      if (heal) {
+        this.player.resolve = Math.min(100, this.player.resolve + 15);
+        this.player.voice = Math.min(100, this.player.voice + 25);
+      } else {
+        this.player.resolve = 100;
+        this.player.voice = 80;
+      }
     }
     this.bootstrapEntities();
     this.applyMapFlags();
+    const sec = sectionForMap(this.mapId);
+    this.audio.setTheme(sec.music);
     this.saveGame();
     this.showToast(this.map.name, 3);
     this.audio.levelClear();
@@ -407,10 +465,12 @@ export class Game {
 
   async start() {
     await this.audio.resume();
+    const sec = sectionForMap(this.mapId);
+    this.audio.setTheme(sec.music);
     this.showToast(
       this.map.episode === 0
         ? 'Episode 0 — Basement. Esc: settings & save.'
-        : `${this.map.name} — good luck.`,
+        : `${this.map.name} — ${sec.name}`,
       4,
     );
     this.saveGame();
@@ -727,7 +787,7 @@ export class Game {
       e.hurt = Math.max(0, e.hurt - dt);
       e.attackCd = Math.max(0, e.attackCd - dt);
 
-      if (e.kind === 'boss_manager') {
+      if (e.kind === 'boss') {
         this.updateBoss(e, dt);
         continue;
       }
@@ -735,66 +795,78 @@ export class Game {
       const dx = p.x - e.x;
       const dy = p.y - e.y;
       const dist = Math.hypot(dx, dy);
-      const range = e.elite ? 10 : 8;
+      const range = e.elite ? 10 : e.kind === 'libtard' ? 9 : 8;
 
-      if (dist < range && dist > 0.55) {
+      // Libtards kite slightly (prefer mid range)
+      let preferDist = 0.55;
+      if (e.kind === 'libtard' && dist < 2.2) preferDist = 2.0;
+
+      if (dist < range && dist > preferDist) {
         const sp = e.speed * dt * (e.hurt > 0 ? 0.4 : 1);
         const nx = e.x + (dx / dist) * sp;
         const ny = e.y + (dy / dist) * sp;
         if (!isSolid(this.map, nx, e.y)) e.x = nx;
         if (!isSolid(this.map, e.x, ny)) e.y = ny;
+      } else if (e.kind === 'libtard' && dist < preferDist && dist > 0.2) {
+        const sp = e.speed * dt;
+        const nx = e.x - (dx / dist) * sp;
+        const ny = e.y - (dy / dist) * sp;
+        if (!isSolid(this.map, nx, e.y)) e.x = nx;
+        if (!isSolid(this.map, e.x, ny)) e.y = ny;
       }
 
-      const hitRange = e.elite ? 0.75 : 0.7;
-      const dmg = e.elite ? 18 : 12;
+      const hitRange = e.elite ? 0.75 : e.kind === 'woke' ? 0.8 : 0.7;
+      const dmg = e.damage ?? 12;
       if (dist < hitRange && e.attackCd <= 0 && p.invuln <= 0 && !this.dashing) {
-        e.attackCd = e.elite ? 0.9 : 1.1;
+        e.attackCd = e.elite ? 0.85 : e.kind === 'bureaucrat' ? 1.2 : 1.0;
         this.hurtPlayer(dmg);
       }
     }
   }
 
-  private updateBoss(b: BossManager, dt: number) {
+  private updateBoss(b: Enemy, dt: number) {
     const p = this.player;
     b.phase = b.hp < b.maxHp * 0.45 ? 2 : 1;
     const dx = p.x - b.x;
     const dy = p.y - b.y;
     const dist = Math.hypot(dx, dy);
     if (dist > 1.2 && dist < 14) {
-      const sp = b.speed * (b.phase === 2 ? 1.25 : 1) * dt;
+      const sp = (b.speed ?? 1) * (b.phase === 2 ? 1.25 : 1) * dt;
       const nx = b.x + (dx / dist) * sp;
       const ny = b.y + (dy / dist) * sp;
       if (!isSolid(this.map, nx, b.y)) b.x = nx;
       if (!isSolid(this.map, b.x, ny)) b.y = ny;
     }
-    if (dist < 1.0 && b.attackCd <= 0 && p.invuln <= 0 && !this.dashing) {
-      b.attackCd = 1.0;
-      this.hurtPlayer(22);
+    if (dist < 1.05 && b.attackCd <= 0 && p.invuln <= 0 && !this.dashing) {
+      b.attackCd = 0.95;
+      this.hurtPlayer(b.damage ?? 22);
     }
-    // spawn adds unless silenced
-    b.spawnCd -= dt;
-    if (b.spawnCd <= 0 && this.bossSilenceTimer <= 0) {
-      b.spawnCd = b.phase === 2 ? 4.5 : 7;
-      const aliveAdds = this.enemies.filter((e) => e.kind === 'karen' && e.alive).length;
-      if (aliveAdds < 6) {
+    b.spawnCd = (b.spawnCd ?? 4) - dt;
+    if ((b.spawnCd ?? 0) <= 0 && this.bossSilenceTimer <= 0 && b.variant !== 'deepfake') {
+      b.spawnCd = b.phase === 2 ? 4.2 : 6.5;
+      const aliveAdds = this.enemies.filter((e) => e.kind !== 'boss' && e.alive).length;
+      if (aliveAdds < 5 + (this.map.episode ?? 0)) {
         const ang = Math.random() * Math.PI * 2;
         const sx = b.x + Math.cos(ang) * 2.2;
         const sy = b.y + Math.sin(ang) * 2.2;
         if (!isSolid(this.map, sx, sy)) {
+          const diff = difficultyForEpisode(this.map.episode ?? 0);
+          const hp = Math.round(45 * diff.hpMul);
           this.enemies.push({
-            kind: 'karen',
+            kind: Math.random() > 0.5 ? 'karen' : 'libtard',
             x: sx,
             y: sy,
-            hp: 50,
-            maxHp: 50,
-            speed: 1.5,
+            hp,
+            maxHp: hp,
+            speed: 1.45 * diff.speedMul,
             hurt: 0,
             attackCd: 0.5,
             alive: true,
             bob: 0,
             elite: false,
+            damage: Math.round(12 * diff.dmgMul),
           });
-          this.showToast('Manager summoned backup!', 1.5);
+          this.showToast(`${b.title ?? 'Boss'} summoned backup!`, 1.4);
         }
       }
     }
@@ -815,13 +887,27 @@ export class Game {
   }
 
   private respawn() {
-    this.player.x = this.map.spawn.x;
-    this.player.y = this.map.spawn.y;
-    this.player.angle = this.map.spawn.angle;
-    this.player.resolve = 100;
-    this.player.voice = 80;
-    this.player.invuln = 2;
-    this.showToast('Resolve failed — back to the entrance.', 3);
+    this.audio.death();
+    this.levelDeaths += 1;
+    this.player.invuln = 2.5;
+    this.player.momentum = 0;
+
+    // GDD extension: 1st death = replay level; 2nd+ = restart section.
+    // Death count resets when a level is cleared.
+    if (this.levelDeaths <= 1) {
+      this.mapFlags[this.mapId] = [];
+      this.loadMap(this.mapId, true, false);
+      this.showToast('Resolve failed — retry this level (1st death).', 3.5);
+    } else {
+      this.sectionRestarts += 1;
+      this.levelDeaths = 0;
+      const sec = sectionForMap(this.mapId);
+      for (const mid of sec.mapIds) {
+        this.mapFlags[mid] = [];
+      }
+      this.loadMap(sec.startMapId, true, false);
+      this.showToast(`Section restart — back to ${sec.name}.`, 4);
+    }
     this.saveGame();
   }
 
@@ -836,7 +922,7 @@ export class Game {
       }
       for (const e of this.enemies) {
         if (!e.alive) continue;
-        const r = e.kind === 'boss_manager' ? 0.7 : 0.4;
+        const r = e.kind === 'boss' ? (e.radius ?? 0.7) : 0.4;
         if (Math.hypot(e.x - pr.x, e.y - pr.y) < r) {
           this.damageEnemy(e, pr.damage);
           pr.life = 0;
@@ -849,9 +935,10 @@ export class Game {
 
   private damageEnemy(e: Enemy, amount: number) {
     if (!e.alive) return;
-    // bosses take full; elites 0.85
     let dmg = amount;
-    if (e.kind === 'karen' && e.elite) dmg *= 0.9;
+    if (e.elite) dmg *= 0.9;
+    if (e.kind === 'bureaucrat') dmg *= 0.75;
+    if (e.variant === 'deepfake') dmg *= 1.15; // logic fantasy — more damage
     e.hp -= dmg;
     e.hurt = 0.25;
     this.player.momentum = Math.min(100, this.player.momentum + 12);
@@ -865,17 +952,28 @@ export class Game {
 
   private convertEnemy(e: Enemy) {
     this.player.conversions++;
-    this.player.brand += e.kind === 'boss_manager' ? 50 : e.kind === 'karen' && e.elite ? 12 : 5;
+    let brandGain = 5;
+    if (e.kind === 'boss') brandGain = e.variant === 'swamp' ? 80 : e.variant === 'deepfake' ? 40 : 55;
+    else if (e.elite) brandGain = 12;
+    else if (e.kind === 'woke') brandGain = 8;
+    else if (e.kind === 'bureaucrat') brandGain = 10;
+    this.player.brand += brandGain;
     this.audio.trumpTrain();
-    this.showConvert(
-      e.kind === 'boss_manager' ? 'MANAGER JOINED THE TRUMP-TRAIN!' : randomConversionLine(),
-    );
+    const line =
+      e.kind === 'boss'
+        ? `${(e.title ?? 'BOSS').toUpperCase()} JOINED THE TRUMP-TRAIN!`
+        : randomConversionLine();
+    this.showConvert(line);
     this.spawnParticles(e.x, e.y, '#c41e3a', 18);
     this.spawnParticles(e.x, e.y, '#ffd700', 12);
-    if (e.kind === 'boss_manager') {
-      this.showToast('Boss converted! Head to the EXIT.', 4);
-      this.saveGame();
+    if (e.variant === 'deepfake') {
+      this.deepfakeBeaten = true;
+      this.showToast('Deepfake converted — truth prevails.', 3);
     }
+    if (e.kind === 'boss' && e.variant !== 'deepfake') {
+      this.showToast('Boss converted! Head to the EXIT.', 4);
+    }
+    this.saveGame();
   }
 
   private updatePickups() {
@@ -908,26 +1006,50 @@ export class Game {
 
   private checkExit() {
     if (!this.exit || this.mapComplete) return;
-    // Boss map: require boss dead
-    const boss = this.enemies.find((e) => e.kind === 'boss_manager');
-    if (boss && boss.alive) return;
+    // Required bosses must be converted (deepfake is optional)
+    const blocking = this.enemies.find(
+      (e) => e.kind === 'boss' && e.alive && e.variant !== 'deepfake',
+    );
+    if (blocking) return;
 
-    // Generous radius — exit is a pad, not a pixel hunt
     if (Math.hypot(this.exit.x - this.player.x, this.exit.y - this.player.y) < 1.15) {
       this.mapComplete = true;
       if (!this.completedMaps.includes(this.mapId)) {
         this.completedMaps.push(this.mapId);
       }
+      // Passing a level resets death-penalty ladder
+      this.levelDeaths = 0;
       this.audio.levelClear();
-      const next = this.map.nextMapId;
+
+      let next = this.map.nextMapId;
+      if (next === 'ep7_approach') {
+        next = chooseEp7Approach(this.player.brand, this.player.plaquesRead.size);
+        this.showToast(
+          next === 'ep7_gold'
+            ? 'High Brand — Golden Escalator path unlocked!'
+            : next === 'ep7_codex'
+              ? 'Plaque scholar — Codex Hall path unlocked!'
+              : 'Swamp approach — the hard road.',
+          3.5,
+        );
+      }
+
       if (next) {
         this.showToast(`AREA CLEAR — ${this.map.name}`, 2.5);
         this.pendingNextMap = next;
         this.transitionTimer = 2.2;
         this.saveGame();
       } else {
-        this.showToast('EPISODE 1 COMPLETE — Campaign continues later!', 6);
-        this.showConvert('THE TRAIN ROLLS ON…');
+        this.ending = evaluateEnding({
+          plaquesRead: [...this.player.plaquesRead],
+          brand: this.player.brand,
+          conversions: this.player.conversions,
+          sectionRestarts: this.sectionRestarts,
+          deepfakeBeaten: this.deepfakeBeaten,
+          totalPlaques: countCampaignPlaques(),
+        });
+        this.showToast(this.ending.title, 6);
+        this.showConvert(this.ending.subtitle);
         this.pendingNextMap = '__END__';
         this.transitionTimer = 3.5;
         this.saveGame();
@@ -1011,17 +1133,17 @@ export class Game {
 
     for (const e of this.enemies) {
       if (!e.alive) continue;
-      if (e.kind === 'boss_manager') {
-        drawBossSprite(this.spriteCtx, 64, 64, e.hurt > 0 ? 1 : this.frame >> 3);
+      if (e.kind === 'boss') {
+        drawBossSprite(this.spriteCtx, 64, 64, e.hurt > 0 ? 1 : this.frame >> 3, e.variant);
         sprites.push({
           x: e.x,
           y: e.y,
           dist: Math.hypot(e.x - p.x, e.y - p.y),
           canvas: cloneCanvas(this.spriteBuf),
-          scale: 1.35,
+          scale: e.variant === 'deepfake' ? 1.0 : 1.35,
         });
       } else {
-        drawKarenSprite(this.spriteCtx, 64, 64, e.hurt > 0 ? 1 : this.frame >> 3);
+        drawFoeSprite(this.spriteCtx, 64, 64, e.kind, e.hurt > 0 ? 1 : this.frame >> 3);
         if (e.elite) {
           this.spriteCtx.strokeStyle = '#9b59b6';
           this.spriteCtx.lineWidth = 3;
@@ -1140,10 +1262,10 @@ export class Game {
       this.displayCtx.fillRect(0, 0, dw, dh);
     }
 
-    // boss HP bar
-    const boss = this.enemies.find((e) => e.kind === 'boss_manager' && e.alive) as
-      | BossManager
-      | undefined;
+    // boss HP bar (primary non-deepfake boss, or any)
+    const boss =
+      this.enemies.find((e) => e.kind === 'boss' && e.alive && e.variant !== 'deepfake') ??
+      this.enemies.find((e) => e.kind === 'boss' && e.alive);
     if (boss) {
       const pct = boss.hp / boss.maxHp;
       this.displayCtx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -1156,7 +1278,7 @@ export class Game {
       this.displayCtx.font = '12px system-ui';
       this.displayCtx.textAlign = 'center';
       this.displayCtx.fillText(
-        `MANAGER OF KARENS${this.bossSilenceTimer > 0 ? ' · LINE JAMMED' : ''}`,
+        `${boss.title ?? 'BOSS'}${this.bossSilenceTimer > 0 ? ' · LINE JAMMED' : ''}`,
         dw / 2,
         70,
       );
@@ -1183,20 +1305,30 @@ export class Game {
     }
 
     if (this.campaignComplete) {
-      this.displayCtx.fillStyle = 'rgba(10,31,68,0.75)';
+      this.displayCtx.fillStyle = 'rgba(10,31,68,0.82)';
       this.displayCtx.fillRect(0, 0, dw, dh);
       this.displayCtx.fillStyle = '#ffd700';
-      this.displayCtx.font = 'bold 28px system-ui';
+      this.displayCtx.font = 'bold 26px system-ui';
       this.displayCtx.textAlign = 'center';
-      this.displayCtx.fillText('EPISODE 1 COMPLETE', dw / 2, dh / 2 - 30);
+      const end = this.ending;
+      this.displayCtx.fillText(end?.title ?? 'CAMPAIGN COMPLETE', dw / 2, dh / 2 - 50);
       this.displayCtx.font = '15px system-ui';
+      this.displayCtx.fillStyle = '#82e0aa';
+      this.displayCtx.fillText(end?.subtitle ?? 'Victory', dw / 2, dh / 2 - 22);
       this.displayCtx.fillStyle = '#e8e8e8';
+      this.displayCtx.font = '13px system-ui';
+      const blurb = end?.blurb ?? 'The train rolls on.';
+      wrapText(this.displayCtx, blurb, dw / 2, dh / 2 + 8, dw * 0.7, 18);
+      this.displayCtx.fillStyle = '#ffd700';
+      this.displayCtx.font = '14px system-ui';
       this.displayCtx.fillText(
-        `Train: ${p.conversions} · Plaques: ${p.plaquesRead.size} · Brand: ${p.brand}`,
+        `Train ${p.conversions} · Plaques ${p.plaquesRead.size}/${countCampaignPlaques()} · Brand ${p.brand} · Section restarts ${this.sectionRestarts}`,
         dw / 2,
-        dh / 2 + 8,
+        dh / 2 + 90,
       );
-      this.displayCtx.fillText('Save kept — Continue later for Ep 2. New Game to restart.', dw / 2, dh / 2 + 36);
+      this.displayCtx.fillStyle = '#8a95a5';
+      this.displayCtx.font = '12px system-ui';
+      this.displayCtx.fillText('New Game from title for another ending path.', dw / 2, dh / 2 + 118);
     }
 
     // HUD
@@ -1224,7 +1356,7 @@ export class Game {
 
     this.weaponName.textContent = weaponLabel(p.weapon);
     const keys = [p.hasRedKey ? '🔑R' : '', p.hasBlueKey ? '🔑B' : ''].filter(Boolean).join(' ');
-    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand}${keys ? ' · ' + keys : ''}${this.dashing ? ' · DASH' : ''}`;
+    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand} · ☠${this.levelDeaths}${keys ? ' · ' + keys : ''}${this.dashing ? ' · DASH' : ''}`;
     if (this.locationEl) this.locationEl.textContent = this.map.name;
   }
 
@@ -1277,5 +1409,27 @@ function cloneCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
   c.height = src.height;
   c.getContext('2d')!.drawImage(src, 0, 0);
   return c;
+}
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+) {
+  const words = text.split(' ');
+  let line = '';
+  let yy = y;
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, yy);
+      line = w;
+      yy += lineHeight;
+    } else line = test;
+  }
+  if (line) ctx.fillText(line, x, yy);
 }
 

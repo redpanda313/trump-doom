@@ -70,14 +70,36 @@ Boss intros should always play as **arcade title cards**, not news chyrons.
 
 ---
 
-## Ending Matrix
+## Ending Matrix (v2 — 6 endings)
 
-| Condition | Ending |
-|-----------|--------|
-| Beat final boss | **Standard:** Inauguration cutscene, credits |
-| Final boss + all plaques | **True:** “People’s Inauguration” + secret weapon unlock message |
-| Final boss on Covfefe | **Title:** “Very Stable Legend” banner |
-| Secret boss Deepfake beaten | Codex entry + gold gavel cosmetic |
+Priority order when evaluating after The Oval:
+
+| Priority | Condition | Ending |
+|----------|-----------|--------|
+| 1 | All plaques collected | **People’s Inauguration** (True) |
+| 2 | Brand ≥ 180 | **Brand Empire** |
+| 3 | ≥12 plaques and Brand ≥ 90 | **Mandate of the Codices** |
+| 4 | Zero section-restart death penalties this run | **Very Stable Legend** |
+| 5 | Brand < 70 and plaques < 6 | **Hollow Victory** |
+| 6 | Otherwise | **Inauguration Day** (Standard) |
+
+### Story branching (Ep 7 approach)
+| Condition | Path |
+|-----------|------|
+| Brand ≥ 120 | **Golden Escalator** (`ep7_gold`) |
+| Plaques ≥ 8 (and Brand < 120) | **Codex Hall** (`ep7_codex`) |
+| Else | **Swamp Approach** (`ep7_swamp`) |
+
+All paths lead to **The Oval** finale. Optional **Deepfake Donald** in the Oval boosts Brand and ending flavor.
+
+### Death penalty (arcade ladder) — GDD extension
+Not a conflict: original GDD defined difficulty modes, not a death ladder. Locked design:
+
+1. **First death** on a level → **retry that level** (flags/enemies reset; Brand/plaques kept)  
+2. **Second+ death** before clearing a level → **restart the section** (episode start map)  
+3. **Clearing any level** → death count **resets**  
+
+Section-restart count is tracked for the **Very Stable Legend** ending.
 
 ---
 

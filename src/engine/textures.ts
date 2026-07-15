@@ -246,21 +246,73 @@ export function drawPhoneSprite(ctx: CanvasRenderingContext2D, w: number, h: num
   ctx.fillText(used ? '…' : '☎', w * 0.5, h * 0.7);
 }
 
-export function drawBossSprite(ctx: CanvasRenderingContext2D, w: number, h: number, frame: number) {
+export function drawBossSprite(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  frame: number,
+  variant = 'manager',
+) {
   ctx.clearRect(0, 0, w, h);
-  // clipboard titan
-  ctx.fillStyle = '#2c3e50';
+  const colors: Record<string, [string, string, string]> = {
+    manager: ['#2c3e50', '#ecf0f1', 'MGR'],
+    hydra: ['#6c3483', '#f5b7b1', 'HYD'],
+    autopen: ['#1a5276', '#d5dbdb', 'PEN'],
+    fraud: ['#7b241c', '#fadbd8', 'FRD'],
+    tribunal: ['#4a235a', '#e8daef', 'JDG'],
+    media: ['#922b21', '#f5b7b1', 'TV'],
+    swamp: ['#145a32', '#d5f5e3', 'SWP'],
+    deepfake: ['#ffd700', '#1a1a2e', 'FAK'],
+  };
+  const [body, face, tag] = colors[variant] ?? colors.manager!;
+  ctx.fillStyle = body;
   ctx.fillRect(w * 0.2, h * 0.15, w * 0.6, h * 0.7);
-  ctx.fillStyle = '#ecf0f1';
+  ctx.fillStyle = face;
   ctx.fillRect(w * 0.28, h * 0.25, w * 0.44, h * 0.45);
-  ctx.fillStyle = '#c0392b';
-  ctx.font = `bold ${Math.floor(h * 0.12)}px sans-serif`;
+  ctx.fillStyle = variant === 'deepfake' ? '#ffd700' : '#c0392b';
+  ctx.font = `bold ${Math.floor(h * 0.11)}px sans-serif`;
   ctx.textAlign = 'center';
-  ctx.fillText('MGR', w * 0.5, h * 0.48);
+  ctx.fillText(tag, w * 0.5, h * 0.48);
   ctx.fillStyle = '#f1c40f';
   ctx.fillRect(w * 0.15, h * 0.1, w * 0.7, h * 0.08);
   if (frame % 2 === 1) {
     ctx.fillStyle = 'rgba(231,76,60,0.25)';
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+export function drawFoeSprite(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  kind: string,
+  frame: number,
+) {
+  ctx.clearRect(0, 0, w, h);
+  if (kind === 'karen') {
+    drawKarenSprite(ctx, w, h, frame);
+    return;
+  }
+  // body
+  const palette: Record<string, string> = {
+    libtard: '#5dade2',
+    woke: '#af7ac5',
+    bureaucrat: '#7f8c8d',
+  };
+  ctx.fillStyle = '#e8d5c4';
+  ctx.fillRect(w * 0.3, h * 0.25, w * 0.4, h * 0.3);
+  ctx.fillStyle = palette[kind] ?? '#888';
+  ctx.fillRect(w * 0.22, h * 0.48, w * 0.56, h * 0.38);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(w * 0.34, h * 0.3, w * 0.12, h * 0.06);
+  ctx.fillRect(w * 0.54, h * 0.3, w * 0.12, h * 0.06);
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.floor(h * 0.1)}px sans-serif`;
+  ctx.textAlign = 'center';
+  const tag = kind === 'libtard' ? 'LT' : kind === 'woke' ? 'WK' : 'BR';
+  ctx.fillText(tag, w * 0.5, h * 0.7);
+  if (frame % 2 === 1) {
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.fillRect(0, 0, w, h);
   }
 }

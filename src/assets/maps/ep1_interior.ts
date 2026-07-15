@@ -87,6 +87,23 @@ export const ep1Interior: GameMap = {
       wallY: 10,
       flag: 'ep1_secret',
     },
+    {
+      type: 'secret_trigger',
+      x: 5.5,
+      y: 6.5,
+      wallX: 3,
+      wallY: 4,
+      flag: 'ep1_secret2',
+    },
+    { type: 'pickup', x: 4.5, y: 5.5, kind: 'brand' },
+    {
+      type: 'secret_trigger',
+      x: 18.5,
+      y: 15.5,
+      wallX: 19,
+      wallY: 15,
+      flag: 'ep1_secret3',
+    },
     { type: 'exit', x: 10.5, y: 17.5 },
   ],
 };
