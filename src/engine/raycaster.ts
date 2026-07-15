@@ -19,13 +19,13 @@ export interface RaycasterState {
   planeY: number;
 }
 
-const FOG = 12;
-
 export class Raycaster {
   private zBuffer: Float64Array;
   private img: ImageData;
   private w: number;
   private h: number;
+  fogDistance = 12;
+  fogRgb: [number, number, number] = [8, 12, 28];
 
   constructor(
     private ctx: CanvasRenderingContext2D,
@@ -36,6 +36,11 @@ export class Raycaster {
     this.h = h;
     this.zBuffer = new Float64Array(w);
     this.img = new ImageData(w, h);
+  }
+
+  setAtmosphere(fogDistance: number, fogRgb: [number, number, number]) {
+    this.fogDistance = fogDistance;
+    this.fogRgb = fogRgb;
   }
 
   resize(w: number, h: number) {
@@ -54,15 +59,16 @@ export class Raycaster {
     const { w, h } = this;
     const data = this.img.data;
 
-    // ceiling + floor solid (fast)
+    // ceiling (sky) + floor — lerps toward zone fog for atmosphere
     const ceil = hexToRgb(map.ceilingColor);
     const floor = hexToRgb(map.floorColor);
+    const [fr, fg, fb] = this.fogRgb;
     for (let y = 0; y < h; y++) {
       const isCeil = y < h / 2;
       const t = isCeil ? y / (h / 2) : (y - h / 2) / (h / 2);
-      const r = isCeil ? lerp(ceil[0], 20, t * 0.3) : lerp(floor[0], 10, t);
-      const g = isCeil ? lerp(ceil[1], 20, t * 0.3) : lerp(floor[1], 10, t);
-      const b = isCeil ? lerp(ceil[2], 30, t * 0.3) : lerp(floor[2], 15, t);
+      const r = isCeil ? lerp(ceil[0], fr, t * 0.55) : lerp(floor[0], fr * 0.5, t);
+      const g = isCeil ? lerp(ceil[1], fg, t * 0.55) : lerp(floor[1], fg * 0.5, t);
+      const b = isCeil ? lerp(ceil[2], fb, t * 0.55) : lerp(floor[2], fb * 0.5, t);
       for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4;
         data[i] = r;
@@ -144,7 +150,7 @@ export class Raycaster {
       if (side === 0 && rayDirX > 0) texX = 64 - texX - 1;
       if (side === 1 && rayDirY < 0) texX = 64 - texX - 1;
 
-      const shade = (side === 1 ? 0.7 : 1) * Math.max(0.2, 1 - perpWallDist / FOG);
+      const shade = (side === 1 ? 0.7 : 1) * Math.max(0.2, 1 - perpWallDist / this.fogDistance);
 
       for (let y = drawStart; y <= drawEnd; y++) {
         const d = y * 256 - h * 128 + lineHeight * 128;

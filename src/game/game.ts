@@ -12,6 +12,8 @@ import {
   drawBossSprite,
   drawFoeSprite,
 } from '../engine/textures';
+import { findOpenSpawn, findBossAddSpawn } from '../engine/spawn';
+import { zoneThemeForEpisode, type ZoneTheme, type FoeKindName } from '../engine/zoneTheme';
 import { GameAudio } from '../engine/audio';
 import {
   type PlayerState,
@@ -60,8 +62,16 @@ export class Game {
   private particles: Particle[] = [];
   private input: Input;
   private audio = new GameAudio();
-  private textures = createWallTextures();
+  private zone: ZoneTheme = zoneThemeForEpisode(0);
+  private textures = createWallTextures(this.zone);
   private raycaster: Raycaster;
+  private deathFx: {
+    t: number;
+    duration: number;
+    text: string;
+    mode: 'level' | 'section';
+    targetMapId: string;
+  } | null = null;
   private offscreen: HTMLCanvasElement;
   private offCtx: CanvasRenderingContext2D;
   private spriteBuf: HTMLCanvasElement;
@@ -121,8 +131,6 @@ export class Game {
       clearSave();
     }
 
-    this.bootstrapEntities();
-    this.applyMapFlags();
     this.input = new Input(canvas);
 
     this.offscreen = document.createElement('canvas');
@@ -135,6 +143,17 @@ export class Game {
     this.spriteBuf.width = 64;
     this.spriteBuf.height = 64;
     this.spriteCtx = this.spriteBuf.getContext('2d')!;
+
+    // Zone look + safe spawns after save applied
+    this.applyZoneTheme();
+    const safePlayer = findOpenSpawn(this.map, this.player.x, this.player.y);
+    if (safePlayer) {
+      this.player.x = safePlayer.x;
+      this.player.y = safePlayer.y;
+    }
+    this.bootstrapEntities();
+    this.applyMapFlags();
+    this.sanitizeEntityPositions();
 
     this.resolveFill = document.getElementById('resolve-fill')!;
     this.voiceFill = document.getElementById('voice-fill')!;
@@ -306,53 +325,44 @@ export class Game {
     for (const e of this.map.entities) {
       if (e.type === 'karen' || e.type === 'libtard' || e.type === 'woke' || e.type === 'bureaucrat') {
         const elite = e.type === 'karen' && !!e.elite;
-        let baseHp = 60;
-        let baseSp = 1.4;
-        let dmg = 12;
-        if (e.type === 'libtard') {
-          baseHp = 48;
-          baseSp = 1.75;
-          dmg = 14;
-        } else if (e.type === 'woke') {
-          baseHp = 90;
-          baseSp = 1.15;
-          dmg = 16;
-        } else if (e.type === 'bureaucrat') {
-          baseHp = 120;
-          baseSp = 0.95;
-          dmg = 15;
+        // Prefer zone roster flavor while keeping elite karens
+        let kind: FoeKindName =
+          e.type === 'karen'
+            ? 'karen'
+            : e.type;
+        if (!elite && this.zone.enemyRoster.length && Math.random() < 0.35) {
+          kind = this.zone.enemyRoster[(Math.random() * this.zone.enemyRoster.length) | 0]!;
         }
-        if (elite) {
-          baseHp = 110;
-          baseSp = 1.2;
-          dmg = 18;
-        }
-        const hp = Math.round(baseHp * diff.hpMul);
+        const stats = foeBaseStats(kind, elite);
+        const hp = Math.round(stats.hp * diff.hpMul);
+        const pos = findOpenSpawn(this.map, e.x, e.y);
+        if (!pos) continue;
         this.enemies.push({
-          kind: e.type === 'karen' ? 'karen' : e.type,
-          x: e.x,
-          y: e.y,
+          kind,
+          x: pos.x,
+          y: pos.y,
           hp,
           maxHp: hp,
-          speed: baseSp * diff.speedMul,
+          speed: stats.speed * diff.speedMul,
           hurt: 0,
           attackCd: 0,
           alive: true,
           bob: Math.random() * Math.PI * 2,
           elite,
-          damage: Math.round(dmg * diff.dmgMul),
+          damage: Math.round(stats.dmg * diff.dmgMul),
           radius: 0.4,
         });
       } else if (e.type === 'boss' || e.type === 'boss_manager') {
         const variant = e.type === 'boss_manager' ? 'manager' : e.variant;
         const meta = bossMeta(variant);
         const hp = Math.round(meta.hp * (0.85 + (this.map.episode ?? 0) * 0.05));
+        const pos = findOpenSpawn(this.map, e.x, e.y, 0.35) ?? { x: e.x, y: e.y };
         this.enemies.push({
           kind: 'boss',
           variant,
           title: meta.title,
-          x: e.x,
-          y: e.y,
+          x: pos.x,
+          y: pos.y,
           hp,
           maxHp: hp,
           speed: meta.speed,
@@ -367,10 +377,11 @@ export class Game {
           radius: 0.7,
         });
       } else if (e.type === 'plaque') {
+        const pos = findOpenSpawn(this.map, e.x, e.y) ?? { x: e.x, y: e.y };
         this.plaques.push({
           kind: 'plaque',
-          x: e.x,
-          y: e.y,
+          x: pos.x,
+          y: pos.y,
           id: e.id,
           title: e.title,
           text: e.text,
@@ -378,31 +389,36 @@ export class Game {
         });
       } else if (e.type === 'pickup') {
         const flag = `pickup_${pi++}`;
+        const pos = findOpenSpawn(this.map, e.x, e.y);
+        if (!pos) continue;
         this.pickups.push({
           kind: 'pickup',
-          x: e.x,
-          y: e.y,
+          x: pos.x,
+          y: pos.y,
           item: e.kind,
           taken: this.hasFlag(flag),
           flag,
         });
       } else if (e.type === 'exit') {
-        this.exit = { kind: 'exit', x: e.x, y: e.y };
+        const pos = findOpenSpawn(this.map, e.x, e.y) ?? { x: e.x, y: e.y };
+        this.exit = { kind: 'exit', x: pos.x, y: pos.y };
       } else if (e.type === 'button') {
+        const pos = findOpenSpawn(this.map, e.x, e.y) ?? { x: e.x, y: e.y };
         this.buttons.push({
           kind: 'button',
-          x: e.x,
-          y: e.y,
+          x: pos.x,
+          y: pos.y,
           openCells: e.openCells,
           flag: e.flag,
           label: e.label,
           used: this.hasFlag(e.flag),
         });
       } else if (e.type === 'phone') {
+        const pos = findOpenSpawn(this.map, e.x, e.y) ?? { x: e.x, y: e.y };
         this.phones.push({
           kind: 'phone',
-          x: e.x,
-          y: e.y,
+          x: pos.x,
+          y: pos.y,
           flag: e.flag,
           label: e.label,
           effect: e.effect,
@@ -413,6 +429,15 @@ export class Game {
         });
       }
     }
+  }
+
+  private applyZoneTheme() {
+    this.zone = zoneThemeForEpisode(this.map.episode ?? 0);
+    this.map.floorColor = this.zone.floor;
+    this.map.ceilingColor = this.zone.ceiling;
+    this.textures = createWallTextures(this.zone);
+    this.raycaster.setAtmosphere(this.zone.fog, this.zone.fogRgb);
+    this.audio.setTheme(this.zone.music);
   }
 
   private applyMapFlags() {
@@ -440,9 +465,12 @@ export class Game {
   private loadMap(id: string, atSpawn = true, heal = true) {
     this.mapId = id;
     this.map = cloneMap(getMapTemplate(id));
+    this.applyZoneTheme();
     if (atSpawn) {
-      this.player.x = this.map.spawn.x;
-      this.player.y = this.map.spawn.y;
+      const spawn =
+        findOpenSpawn(this.map, this.map.spawn.x, this.map.spawn.y) ?? this.map.spawn;
+      this.player.x = spawn.x;
+      this.player.y = spawn.y;
       this.player.angle = this.map.spawn.angle;
       this.player.hasRedKey = false;
       this.player.hasBlueKey = false;
@@ -453,30 +481,82 @@ export class Game {
         this.player.resolve = 100;
         this.player.voice = 80;
       }
+    } else {
+      // Continue: snap player out of walls if save put them inside
+      const safe = findOpenSpawn(this.map, this.player.x, this.player.y);
+      if (safe) {
+        this.player.x = safe.x;
+        this.player.y = safe.y;
+      }
     }
     this.bootstrapEntities();
     this.applyMapFlags();
-    const sec = sectionForMap(this.mapId);
-    this.audio.setTheme(sec.music);
+    // Re-snap entities after flags open walls/secrets
+    this.sanitizeEntityPositions();
     this.saveGame();
-    this.showToast(this.map.name, 3);
+    this.showToast(`${this.map.name} — ${this.zone.label}`, 3);
     this.audio.levelClear();
+  }
+
+  /** After doors/secrets open, pull any stuck sprites into open floor. */
+  private sanitizeEntityPositions() {
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const p = findOpenSpawn(this.map, e.x, e.y, e.kind === 'boss' ? 0.35 : 0.22);
+      if (p) {
+        e.x = p.x;
+        e.y = p.y;
+      }
+    }
+    for (const p of this.pickups) {
+      if (p.taken) continue;
+      const pos = findOpenSpawn(this.map, p.x, p.y);
+      if (pos) {
+        p.x = pos.x;
+        p.y = pos.y;
+      }
+    }
+    for (const pl of this.plaques) {
+      const pos = findOpenSpawn(this.map, pl.x, pl.y);
+      if (pos) {
+        pl.x = pos.x;
+        pl.y = pos.y;
+      }
+    }
+    if (this.exit) {
+      const pos = findOpenSpawn(this.map, this.exit.x, this.exit.y);
+      if (pos) {
+        this.exit.x = pos.x;
+        this.exit.y = pos.y;
+      }
+    }
   }
 
   async start() {
     await this.audio.resume();
-    const sec = sectionForMap(this.mapId);
-    this.audio.setTheme(sec.music);
+    this.applyZoneTheme();
     this.showToast(
       this.map.episode === 0
-        ? 'Episode 0 — Basement. Esc: settings & save.'
-        : `${this.map.name} — ${sec.name}`,
+        ? `Episode 0 — ${this.zone.label}. Esc: settings & save.`
+        : `${this.map.name} — ${this.zone.ambientLabel}`,
       4,
     );
     this.saveGame();
   }
 
   update(dt: number) {
+    // Death cinematic — freeze everything but the fade
+    if (this.deathFx) {
+      this.deathFx.t += dt;
+      if (this.deathFx.t >= this.deathFx.duration) {
+        const fx = this.deathFx;
+        this.deathFx = null;
+        this.finishDeathRestart(fx.mode, fx.targetMapId);
+      }
+      this.input.endFrame();
+      return;
+    }
+
     if (this.input.pausePressed) {
       this.setPaused(!this.paused);
     }
@@ -697,6 +777,7 @@ export class Game {
         this.addFlag(b.flag);
         for (const c of b.openCells) setCell(this.map, c.x, c.y, 0);
         this.audio.button();
+        this.sanitizeEntityPositions();
         this.showToast(`${b.label} — activated!`, 2.5);
         this.saveGame();
         return;
@@ -740,6 +821,7 @@ export class Game {
         }
         this.addFlag(flag);
         this.audio.plaque();
+        this.sanitizeEntityPositions();
         this.showToast('Secret opened — tremendous room!', 3);
         this.saveGame();
         return;
@@ -766,6 +848,7 @@ export class Game {
           }
         }
         this.addFlag('red_doors_open');
+        this.sanitizeEntityPositions();
         this.showToast('Red Tie Key accepted. Doors open.', 2.5);
         this.audio.pickup();
         this.saveGame();
@@ -846,25 +929,26 @@ export class Game {
       b.spawnCd = b.phase === 2 ? 4.2 : 6.5;
       const aliveAdds = this.enemies.filter((e) => e.kind !== 'boss' && e.alive).length;
       if (aliveAdds < 5 + (this.map.episode ?? 0)) {
-        const ang = Math.random() * Math.PI * 2;
-        const sx = b.x + Math.cos(ang) * 2.2;
-        const sy = b.y + Math.sin(ang) * 2.2;
-        if (!isSolid(this.map, sx, sy)) {
+        const pos = findBossAddSpawn(this.map, b.x, b.y);
+        if (pos) {
           const diff = difficultyForEpisode(this.map.episode ?? 0);
-          const hp = Math.round(45 * diff.hpMul);
+          const roster = this.zone.enemyRoster;
+          const kind = roster[(Math.random() * roster.length) | 0] ?? 'karen';
+          const stats = foeBaseStats(kind, false);
+          const hp = Math.round(stats.hp * 0.75 * diff.hpMul);
           this.enemies.push({
-            kind: Math.random() > 0.5 ? 'karen' : 'libtard',
-            x: sx,
-            y: sy,
+            kind,
+            x: pos.x,
+            y: pos.y,
             hp,
             maxHp: hp,
-            speed: 1.45 * diff.speedMul,
+            speed: stats.speed * diff.speedMul,
             hurt: 0,
             attackCd: 0.5,
             alive: true,
             bob: 0,
             elite: false,
-            damage: Math.round(12 * diff.dmgMul),
+            damage: Math.round(stats.dmg * diff.dmgMul),
           });
           this.showToast(`${b.title ?? 'Boss'} summoned backup!`, 1.4);
         }
@@ -873,6 +957,7 @@ export class Game {
   }
 
   private hurtPlayer(amount: number) {
+    if (this.deathFx) return;
     const p = this.player;
     p.resolve -= amount;
     p.invuln = 0.6;
@@ -882,32 +967,50 @@ export class Game {
     this.spawnParticles(p.x, p.y, '#c41e3a', 6);
     if (p.resolve <= 0) {
       p.resolve = 0;
-      this.respawn();
+      this.beginDeathSequence();
     }
   }
 
-  private respawn() {
+  private beginDeathSequence() {
+    if (this.deathFx) return;
     this.audio.death();
     this.levelDeaths += 1;
-    this.player.invuln = 2.5;
+    this.player.invuln = 99;
     this.player.momentum = 0;
+    this.player.attackCooldown = 99;
 
-    // GDD extension: 1st death = replay level; 2nd+ = restart section.
-    // Death count resets when a level is cleared.
-    if (this.levelDeaths <= 1) {
-      this.mapFlags[this.mapId] = [];
-      this.loadMap(this.mapId, true, false);
-      this.showToast('Resolve failed — retry this level (1st death).', 3.5);
-    } else {
+    const mode: 'level' | 'section' = this.levelDeaths <= 1 ? 'level' : 'section';
+    let targetMapId = this.mapId;
+    if (mode === 'section') {
       this.sectionRestarts += 1;
       this.levelDeaths = 0;
       const sec = sectionForMap(this.mapId);
-      for (const mid of sec.mapIds) {
-        this.mapFlags[mid] = [];
-      }
-      this.loadMap(sec.startMapId, true, false);
-      this.showToast(`Section restart — back to ${sec.name}.`, 4);
+      for (const mid of sec.mapIds) this.mapFlags[mid] = [];
+      targetMapId = sec.startMapId;
+    } else {
+      this.mapFlags[this.mapId] = [];
     }
+
+    this.deathFx = {
+      t: 0,
+      duration: 3.2,
+      text: randomDeathLine(),
+      mode,
+      targetMapId,
+    };
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  private finishDeathRestart(mode: 'level' | 'section', targetMapId: string) {
+    this.loadMap(targetMapId, true, false);
+    this.player.invuln = 2;
+    this.player.attackCooldown = 0;
+    this.showToast(
+      mode === 'level'
+        ? 'Retry this level — the train still needs you.'
+        : `Section restart — ${sectionForMap(targetMapId).name}.`,
+      3.5,
+    );
     this.saveGame();
   }
 
@@ -1262,6 +1365,40 @@ export class Game {
       this.displayCtx.fillRect(0, 0, dw, dh);
     }
 
+    // Death cinematic: blue fade + freeze message
+    if (this.deathFx) {
+      const u = Math.min(1, this.deathFx.t / this.deathFx.duration);
+      const fade = Math.min(1, u * 1.4);
+      this.displayCtx.fillStyle = `rgba(10, 40, 90, ${0.35 + fade * 0.55})`;
+      this.displayCtx.fillRect(0, 0, dw, dh);
+      // vignette
+      const grad = this.displayCtx.createRadialGradient(dw / 2, dh / 2, dh * 0.1, dw / 2, dh / 2, dh * 0.7);
+      grad.addColorStop(0, 'rgba(20,60,120,0)');
+      grad.addColorStop(1, `rgba(0,20,60,${fade * 0.7})`);
+      this.displayCtx.fillStyle = grad;
+      this.displayCtx.fillRect(0, 0, dw, dh);
+
+      const textAlpha = Math.min(1, Math.max(0, (u - 0.15) / 0.35));
+      this.displayCtx.save();
+      this.displayCtx.globalAlpha = textAlpha;
+      this.displayCtx.fillStyle = '#a8d4ff';
+      this.displayCtx.font = 'bold 22px system-ui';
+      this.displayCtx.textAlign = 'center';
+      this.displayCtx.shadowColor = '#003366';
+      this.displayCtx.shadowBlur = 12;
+      wrapText(this.displayCtx, this.deathFx.text, dw / 2, dh / 2 - 10, dw * 0.75, 28);
+      this.displayCtx.font = '13px system-ui';
+      this.displayCtx.fillStyle = '#7eb6e8';
+      this.displayCtx.shadowBlur = 0;
+      this.displayCtx.fillText(
+        this.deathFx.mode === 'level' ? 'Retrying level…' : 'Restarting section…',
+        dw / 2,
+        dh / 2 + 50,
+      );
+      this.displayCtx.restore();
+      return; // skip normal HUD pulse during death
+    }
+
     // boss HP bar (primary non-deepfake boss, or any)
     const boss =
       this.enemies.find((e) => e.kind === 'boss' && e.alive && e.variant !== 'deepfake') ??
@@ -1356,8 +1493,8 @@ export class Game {
 
     this.weaponName.textContent = weaponLabel(p.weapon);
     const keys = [p.hasRedKey ? '🔑R' : '', p.hasBlueKey ? '🔑B' : ''].filter(Boolean).join(' ');
-    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand} · ☠${this.levelDeaths}${keys ? ' · ' + keys : ''}${this.dashing ? ' · DASH' : ''}`;
-    if (this.locationEl) this.locationEl.textContent = this.map.name;
+    this.statsEl.textContent = `EP${this.map.episode ?? '?'} · ${this.zone.label.toUpperCase()} · TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand} · ☠${this.levelDeaths}${keys ? ' · ' + keys : ''}${this.dashing ? ' · DASH' : ''}`;
+    if (this.locationEl) this.locationEl.textContent = `${this.map.name} · ${this.zone.ambientLabel}`;
   }
 
   private drawWeapon() {
@@ -1431,5 +1568,42 @@ function wrapText(
     } else line = test;
   }
   if (line) ctx.fillText(line, x, yy);
+}
+
+function foeBaseStats(kind: FoeKindName, elite: boolean): { hp: number; speed: number; dmg: number } {
+  if (elite) return { hp: 110, speed: 1.2, dmg: 18 };
+  switch (kind) {
+    case 'libtard':
+      return { hp: 48, speed: 1.75, dmg: 14 };
+    case 'woke':
+      return { hp: 90, speed: 1.15, dmg: 16 };
+    case 'bureaucrat':
+      return { hp: 120, speed: 0.95, dmg: 15 };
+    case 'karen':
+    default:
+      return { hp: 60, speed: 1.4, dmg: 12 };
+  }
+}
+
+const DEATH_LINES = [
+  'You caved to the woke mob…',
+  'They got your manager. And then you.',
+  'Resolve depleted. The narrative wins this round.',
+  'Fact-checked into next week.',
+  'Canceled. Temporarily.',
+  'The Autopen signed your defeat.',
+  'Injunction granted: silence.',
+  'Ratings tanked. Comeback pending.',
+  'You asked for the manager of reality. Reality said no.',
+  'Speech bubble: "oof."',
+  'The train left without you. Catch the next one.',
+  'Brand damage critical. Rebuild required.',
+  'Safe space claimed your spawn point.',
+  'Polls say you lost. Rallies say retry.',
+  'Deepfake of your defeat trending.',
+];
+
+function randomDeathLine(): string {
+  return DEATH_LINES[(Math.random() * DEATH_LINES.length) | 0]!;
 }
 

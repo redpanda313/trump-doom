@@ -1,5 +1,8 @@
 /** Procedural wall textures + sprite drawing (in-engine art). */
 
+import type { WallStyle, ZoneTheme } from './zoneTheme';
+import { zoneThemeForEpisode } from './zoneTheme';
+
 export type Texture = ImageData;
 
 const TEX_SIZE = 64;
@@ -10,104 +13,71 @@ function makeTexture(paint: (x: number, y: number) => [number, number, number]):
     for (let x = 0; x < TEX_SIZE; x++) {
       const [r, g, b] = paint(x, y);
       const i = (y * TEX_SIZE + x) * 4;
-      data.data[i] = r;
-      data.data[i + 1] = g;
-      data.data[i + 2] = b;
+      data.data[i] = Math.max(0, Math.min(255, r));
+      data.data[i + 1] = Math.max(0, Math.min(255, g));
+      data.data[i + 2] = Math.max(0, Math.min(255, b));
       data.data[i + 3] = 255;
     }
   }
   return data;
 }
 
-export function createWallTextures(): Map<number, Texture> {
+function paintStyle(style: WallStyle): (x: number, y: number) => [number, number, number] {
+  switch (style.kind) {
+    case 'noise':
+      return (x, y) => {
+        const n = ((x * 13 + y * 7) ^ (x * y)) & 15;
+        const v = n - 7;
+        return [
+          style.base[0] + v * (style.variance / 8),
+          style.base[1] + v * (style.variance / 8),
+          style.base[2] + v * (style.variance / 8),
+        ];
+      };
+    case 'stripe':
+      return (_x, y) => {
+        const on = Math.floor(y / style.period) % 2 === 0;
+        return on ? style.a : style.b;
+      };
+    case 'grid':
+      return (x, y) => {
+        const g = x % style.step === 0 || y % style.step === 0;
+        return g ? style.line : style.fill;
+      };
+    case 'band':
+      return (x, y) => {
+        if (y > style.y0 && y < style.y1) return style.band;
+        const n = ((x + y) & 7);
+        return [style.fill[0] + n, style.fill[1] + n, style.fill[2] + n];
+      };
+    case 'chevron':
+      return (x, y) => {
+        const chev = (x + y) % 16 < 8;
+        return chev ? style.a : style.b;
+      };
+    case 'mesh':
+      return (x, y) => {
+        const mesh = (x + y) % 4 === 0 || (x - y) % 4 === 0;
+        return mesh ? style.line : style.fill;
+      };
+  }
+}
+
+/** Zone-themed wall set — each episode looks distinct. */
+export function createWallTextures(theme?: ZoneTheme): Map<number, Texture> {
+  const z = theme ?? zoneThemeForEpisode(0);
   const map = new Map<number, Texture>();
-
-  // 1 — basement concrete
-  map.set(
-    1,
-    makeTexture((x, y) => {
-      const n = ((x * 13 + y * 7) ^ (x * y)) & 15;
-      const v = 70 + n;
-      return [v, v + 2, v + 5];
-    }),
-  );
-
-  // 2 — gold brand stripe wall
-  map.set(
-    2,
-    makeTexture((x, y) => {
-      if (y > 20 && y < 44) return [220, 180, 40];
-      const v = 25 + ((x + y) & 7);
-      return [v, v + 5, 40 + v];
-    }),
-  );
-
-  // 3 — red news / warning
-  map.set(
-    3,
-    makeTexture((_x, y) => {
-      const stripe = Math.floor(y / 8) % 2 === 0;
-      return stripe ? [160, 30, 40] : [40, 40, 45];
-    }),
-  );
-
-  // 4 — wood panel (family office)
-  map.set(
-    4,
-    makeTexture((x, y) => {
-      const grain = Math.sin(y * 0.4 + x * 0.05) * 12;
-      return [110 + grain, 70 + grain * 0.5, 35];
-    }),
-  );
-
-  // 5 — tech / radio wall
-  map.set(
-    5,
-    makeTexture((x, y) => {
-      const grid = x % 8 === 0 || y % 8 === 0;
-      if (grid) return [0, 140, 180];
-      return [15, 25, 40];
-    }),
-  );
-
-  // 6 — secret wall (slightly different concrete)
-  map.set(
-    6,
-    makeTexture((x, y) => {
-      const n = ((x * 11 + y * 5) ^ 3) & 15;
-      const v = 78 + n;
-      return [v + 5, v, v - 5];
-    }),
-  );
-
-  // 7 — exit / escalator gold
-  map.set(
-    7,
-    makeTexture((x, y) => {
-      const chev = ((x + y) % 16) < 8;
-      return chev ? [255, 215, 0] : [10, 31, 68];
-    }),
-  );
-
-  // 8 — strip-mall stucco / beige storefront
-  map.set(
-    8,
-    makeTexture((x, y) => {
-      const n = ((x * 3 + y * 5) & 7);
-      return [180 + n, 160 + n, 130 + n];
-    }),
-  );
-
-  // 9 — HOA / chain-link style gate
-  map.set(
-    9,
-    makeTexture((x, y) => {
-      const mesh = (x + y) % 4 === 0 || (x - y) % 4 === 0;
-      return mesh ? [90, 100, 110] : [40, 45, 50];
-    }),
-  );
-
+  const fallback: WallStyle = { kind: 'noise', base: [80, 80, 85], variance: 10 };
+  for (let id = 1; id <= 9; id++) {
+    const style = z.walls[id] ?? fallback;
+    map.set(id, makeTexture(paintStyle(style)));
+  }
   return map;
+}
+
+/** @deprecated use createWallTextures(theme) */
+export function createDefaultWallTextures(): Map<number, Texture> {
+  return createWallTextures(zoneThemeForEpisode(0));
 }
 
 export function sampleTexture(tex: Texture, u: number, v: number, shade: number): [number, number, number] {
