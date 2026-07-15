@@ -1,0 +1,16 @@
+{
+  "name": "trump-doom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Doom-inspired browser FPS — rhetoric combat satire. Road to the Oval.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trump Doom — The Road to the Oval</title>
+    <meta
+      name="description"
+      content="Doom-inspired browser FPS. Fight satire with debate, framing, and logic. Non-violent rhetoric combat."
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+      <div id="hud" class="hud hidden">
+        <div class="hud-bar">
+          <span class="label">RESOLVE</span>
+          <div class="meter"><div id="resolve-fill" class="fill resolve"></div></div>
+        </div>
+        <div class="hud-bar">
+          <span class="label">VOICE</span>
+          <div class="meter"><div id="voice-fill" class="fill voice"></div></div>
+        </div>
+        <div id="weapon-name" class="weapon-name">DEBATE GAVEL</div>
+        <div id="plaque-toast" class="plaque-toast hidden"></div>
+      </div>
+      <div id="title-screen" class="title-screen">
+        <div class="title-card">
+          <p class="eyebrow">A DOOM-INSPIRED RHETORIC SHOOTER</p>
+          <h1>TRUMP DOOM</h1>
+          <p class="subtitle">The Road to the Oval</p>
+          <p class="blurb">
+            A boy with golden ambition. Monsters of spin. Weapons of debate.<br />
+            Read the plaques. Upgrade your argument. Claim destiny.
+          </p>
+          <button id="btn-start" type="button">ENTER THE CAMPAIGN</button>
+          <p class="disclaimer">
+            Arcade political satire · Non-violent argument combat · Cartoon caricatures only
+          </p>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
