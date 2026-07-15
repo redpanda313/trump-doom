@@ -4,15 +4,19 @@
 **Subtitle:** *Make America Great Again… One Debate at a Time*  
 **Genre:** First-person corridor shooter (Doom-inspired) with rhetoric combat  
 **Platform:** Browser (desktop-first; mobile stretch)  
-**Engine:** Custom WebGL / Canvas hybrid (no Unity/Unreal)  
-**Tone:** Over-the-top political satire · arcade · tongue-in-cheek · non-lethal “argument combat”  
-**Status:** Design Draft v1.0 — Awaiting vision alignment  
+**Engine:** **Classic 2.5D raycaster** (Canvas) — Doom/Wolf DNA  
+**Tone:** **Mythic self-legend** — Trump as Doomguy of destiny; politics as dungeon flavor  
+**Status:** Vision **LOCKED** 2026-07-15 — see [`VISION_LOCK.md`](./VISION_LOCK.md)  
+**Defeat fantasy:** Zero blood — enemies **JOIN THE TRUMP-TRAIN!**  
+**Protagonist:** Always adult Legend Donald (childhood = plaques only)  
+**Audio:** Synth rock  
+**v1 scope:** Vertical slice (Ep 0) first; wishlist: leaderboard, local co-op, local vs
 
 ---
 
 ## 1. Elevator Pitch
 
-You are **young Donald J. Trump** — a boy with golden ambition, a comb-over of destiny, and a dream: **become President of the United States**. The world has been overrun by chaos entities: **Karens**, **Libtards**, **Woke Mobs**, and shadowy bureaucratic horrors. Your weapons are not bullets — they are **Debate**, **Framing**, **Logic**, **Facts**, **Charisma**, and **The Wall** (of text). Storm corridors of media spin, bureaucratic hellscapes, and courtroom dimensions. Read the **story plaques** on the walls. Upgrade your rhetoric tree. Defeat the bosses of American dysfunction. **Win the election of destiny.**
+You are **Donald J. Trump** — always the suited figure of destiny (childhood only in lore plaques). Golden ambition. Comb-over of fate. Dream: **the Oval Office**. The world has been overrun by Narrative Demons: **Karens**, **Libtards**, **Woke Mobs**, and bureaucratic horrors. Your weapons are not bullets — **Debate**, **Framing**, **Logic**, **Facts**, **Charisma**, **The Wall** (of text). Convert foes to the **Trump-Train** (no blood). Read **story plaques**. Upgrade rhetoric. Defeat Autopen, Election Fraud, Rogue Judges. **Claim destiny.**
 
 ---
 
@@ -36,7 +40,7 @@ You are **young Donald J. Trump** — a boy with golden ambition, a comb-over of
 ## 3. Narrative Overview
 
 ### 3.1 Logline
-A golden-haired boy from Queens discovers that America has been invaded by Narrative Demons. Armed only with his mouth, his mind, and an unshakable brand, he must clear every district of spin, defeat the Autopen, expose Election Fraud, out-argue Rogue Judges, and claim the Oval Office.
+Donald J. Trump — already the man of legend in form — walks out of Queens destiny into an America invaded by Narrative Demons. Armed with mouth, mind, and brand, he clears districts of spin, defeats the Autopen, exposes Election Fraud, out-argues Rogue Judges, converts the chaotic to the **Trump-Train**, and claims the Oval Office.
 
 ### 3.2 Acts Structure
 
@@ -60,14 +64,15 @@ White House lawn transformed into a gauntlet of debates. Final boss multi-phase:
 Epilogue: inauguration plaque reading room — optional true ending if all plaques collected.  
 **Theme:** Destiny claimed.
 
-### 3.3 Player Character — Donald (Boy → Candidate → Legend)
+### 3.3 Player Character — Always Legend Donald
 
-| Stage | Visual | Unlocks After |
-|-------|--------|---------------|
-| **Boy Donald** | Shorts, sling-shot of soundbites, oversized blazer | Start |
-| **Builder Donald** | Hard hat, “THE ART OF THE DEAL” book as shield | Episode 2 |
-| **Candidate Donald** | Red tie, podium shield, debate mic rifle | Episode 4 |
-| **Legend Donald** | Gold-trimmed suit, wall-aura, eagle cape (optional cosmetic) | True Ending |
+**Iconography rule (locked):** Like classical depictions that show the sacred child as a small adult — Donald is **always** adult Legend form in gameplay. Childhood is told only through plaques.
+
+| Layer | Visual |
+|-------|--------|
+| **Default** | Navy/black suit, red tie, gold cufflinks, FPS hands |
+| **Cosmetics (optional later)** | Builder hard-hat, rally eagle cape, gold-trim suit — same adult body |
+| **Lore only** | Boyhood deals, radio prophecy, basement ambition (plaques) |
 
 **Personality in-game:** Boastful one-liners, mid-combat quips, secret-room admiration (“Best plaque. Tremendous plaque.”).
 
@@ -119,7 +124,9 @@ Enter Episode Map
 
 ## 5. Combat System — “Rhetoric Warfare”
 
-All combat is **non-lethal**. Enemies are “defeated” by being **debunked**, **framed out of the room**, **logically collapsed**, or **overwhelmed by charisma**. Defeat VFX: poof into confetti, dissolve into newspaper headlines, shrink into a tiny angry tweet, etc.
+All combat is **non-lethal**. Enemies are “defeated” by being **debunked**, **framed**, **logically collapsed**, or **overwhelmed by charisma** — then they **JOIN THE TRUMP-TRAIN!**
+
+**Defeat VFX (locked):** red-hat confetti, gold sparkles, optional mini-train whistle; floater text **“JOINED THE TRUMP-TRAIN!”** (variants: “ALL ABOARD!”, “CONVERTED!”, “TREMENDOUS RECRUIT!”). Zero blood. No corpses.
 
 ### 5.1 Player Resources
 
@@ -353,11 +360,12 @@ Each tree ~8 nodes. Soft cap encourages hybrid builds.
 
 ## 10. Art Direction
 
-### 10.1 Chosen Approach (Hybrid)
-**Primary: In-engine procedural / low-poly stylized** for environments, VFX, UI.  
-**Secondary: Imagine-generated micro-sprites** for enemy icons, pickup stickers, plaque ornaments, title art — **removable backgrounds**, then downscaled / pixel-snapped or used as texture stamps.
+### 10.1 Chosen Approach (Hybrid) — LOCKED
+**Primary: In-engine** raycaster textures, billboard sprites, VFX particles, UI.  
+**Secondary: Imagine-generated micro-sprites** for enemy icons, pickup stickers, plaque ornaments, title art — **removable backgrounds**, pixel-snapped or texture stamps.
 
-Rationale: Fast iteration, consistent lighting, no asset pipeline hell; Imagine for flavor where hand-authored mascot energy helps.
+### 10.0 Rendering — LOCKED
+**Classic 2.5D raycaster** (not full WebGL mesh world for v1).
 
 ### 10.2 Visual Style Keywords
 - **Saturated primaries** — gold, navy, newsroom red  
@@ -388,16 +396,18 @@ Rationale: Fast iteration, consistent lighting, no asset pipeline hell; Imagine 
 
 ## 11. Technical Design
 
-### 11.1 Stack
+### 11.1 Stack — LOCKED
 | Layer | Choice |
 |-------|--------|
 | Language | TypeScript |
 | Bundler | Vite |
-| Rendering | WebGL2 via custom thin engine **or** Three.js for speed of delivery |
-| Collision | Simple AABB + raycast (grid maps) |
-| Maps | JSON grid / sector format (Doom-inspired linedefs lite) |
+| Rendering | **Canvas 2D raycaster** (Wolf/Doom-style columns + billboards) |
+| Collision | Grid walk + radius vs solid cells |
+| Maps | TypeScript/JSON grid (`0` empty, wall IDs, doors, secrets) |
+| Audio | Web Audio synth-rock generator + SFX bus |
 | Hosting | GitHub Pages / static host |
 | Save | localStorage + optional export code |
+| Wishlist hooks | Score events for leaderboard; dual input for local co-op/vs |
 
 ### 11.2 Repo Structure
 ```
@@ -448,12 +458,13 @@ trump-doom/
 ### M0 — Foundation (this PR / repo)
 - Repo + GDD + README + empty playable shell  
 
-### M1 — Vertical Slice
-- 1 tutorial map + 1 combat arena  
+### M1 — Vertical Slice (ACTIVE)
+- Ep 0 Basement raycaster map (keys, 1 secret, exit)  
 - Gavel + Mic Drop  
-- Karen enemy  
-- 2 plaques  
-- Resolve / Voice UI  
+- Karen enemy → Trump-Train conversion  
+- ≥2 plaques  
+- Resolve / Voice UI + synth-rock bed  
+- Adult Legend weapon hands
 
 ### M2 — Episode 1 Complete
 - Full Ep1 maps + Manager of Karens boss  

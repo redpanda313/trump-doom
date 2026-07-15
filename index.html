@@ -14,29 +14,35 @@
     <div id="app">
       <canvas id="game-canvas"></canvas>
       <div id="hud" class="hud hidden">
+        <div class="hud-top">
+          <div id="stats-line" class="stats-line">TRAIN 0 · PLAQUES 0 · BRAND 0</div>
+        </div>
         <div class="hud-bar">
           <span class="label">RESOLVE</span>
           <div class="meter"><div id="resolve-fill" class="fill resolve"></div></div>
         </div>
+        <div id="weapon-name" class="weapon-name">DEBATE GAVEL</div>
         <div class="hud-bar">
           <span class="label">VOICE</span>
           <div class="meter"><div id="voice-fill" class="fill voice"></div></div>
         </div>
-        <div id="weapon-name" class="weapon-name">DEBATE GAVEL</div>
         <div id="plaque-toast" class="plaque-toast hidden"></div>
+        <div id="convert-toast" class="convert-toast hidden"></div>
+        <div class="help-line">WASD · Mouse · LMB/Space fire · RMB/Q alt · 1 Gavel · 2 Mic · E interact/open</div>
       </div>
       <div id="title-screen" class="title-screen">
         <div class="title-card">
-          <p class="eyebrow">A DOOM-INSPIRED RHETORIC SHOOTER</p>
+          <p class="eyebrow">MYTHIC RAYCASTER · SYNTH ROCK · ZERO BLOOD</p>
           <h1>TRUMP DOOM</h1>
           <p class="subtitle">The Road to the Oval</p>
           <p class="blurb">
-            A boy with golden ambition. Monsters of spin. Weapons of debate.<br />
-            Read the plaques. Upgrade your argument. Claim destiny.
+            You are the Legend — suited for destiny. Narrative Demons fill the corridors.<br />
+            Debate them. Convert them. <strong>Join the Trump-Train.</strong><br />
+            Read the plaques. Claim the exit.
           </p>
-          <button id="btn-start" type="button">ENTER THE CAMPAIGN</button>
+          <button id="btn-start" type="button">ENTER THE BASEMENT</button>
           <p class="disclaimer">
-            Arcade political satire · Non-violent argument combat · Cartoon caricatures only
+            Arcade political satire · Non-violent rhetoric combat · Enemies join the Trump-Train · Cartoon caricatures only
           </p>
         </div>
       </div>

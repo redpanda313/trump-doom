@@ -10,14 +10,24 @@ Weapons are debates, framing, logic, and mic drops — not bullets. Enemies are 
 
 ## Status
 
-**Phase:** Design + project scaffold  
+**Phase:** M1 vertical slice (playable)  
+**Vision lock:** [`docs/VISION_LOCK.md`](docs/VISION_LOCK.md)  
 **Design doc:** [`docs/GAME_DESIGN_DOCUMENT.md`](docs/GAME_DESIGN_DOCUMENT.md)
 
 | Milestone | Description |
 |-----------|-------------|
-| M0 | Repo, GDD, playable shell |
-| M1 | Vertical slice (1 map, 2 weapons, Karen, plaques) |
-| M2+ | Full episodes, bosses, progression |
+| M0 | Repo, GDD, shell |
+| **M1** | **Ep 0 raycaster · Gavel + Mic · Karens → Trump-Train · plaques** |
+| M2+ | Ep 1, bosses, progression |
+
+### Vision (locked)
+- **Tone:** Mythic self-legend (Doomguy of destiny)
+- **Tech:** Classic 2.5D raycaster
+- **Art:** Hybrid in-engine + Imagine stamps
+- **Hero:** Always adult Legend Donald (childhood = plaques only)
+- **Defeat:** Zero blood — **JOINED THE TRUMP-TRAIN!**
+- **Audio:** Synth rock (procedural for now)
+- **Wishlist:** Leaderboard, local co-op, local vs
 
 ---
 

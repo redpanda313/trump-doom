@@ -7,23 +7,26 @@ Focus: narrative spine, character arcs, plaque philosophy, boss mythology.
 
 ## Premise
 
-In a parallel arcade America, **Narrative Demons** have leaked out of cable boxes, campus quads, and sealed courtrooms. They feed on confusion and spin. A boy in Queens hears a prophecy in radio static and decides the only cure is the highest office in the land — not as a politician first, but as a **debater-adventurer** clearing corridors of chaos.
+In a parallel arcade America, **Narrative Demons** have leaked out of cable boxes, campus quads, and sealed courtrooms. They feed on confusion and spin. **Donald J. Trump** — always rendered as the adult Legend of destiny — walks the mythic road to the Oval. Childhood ambition lives only on **golden plaques**. He is not “leveling up into adulthood”; he is **Doomguy of destiny** from frame one.
 
 This is **origin myth as Doom campaign**, not biopic.
+
+**Icon rule:** Like classical art that portrays the sacred infant as a small grown man — the player character is always suited Legend Donald.
 
 ---
 
 ## Protagonist Arc
 
-| Stage | Emotional beat | Gameplay mirror |
+| Layer | Emotional beat | Gameplay mirror |
 |-------|----------------|-----------------|
-| Boy | Wonder + bravado | Tutorial toys (gavel, mic) |
-| Builder | Agency through deals | Utility gadgets, Wall |
-| Candidate | Public arena pressure | Boss-phase loadouts |
-| Legend | Mandate of the player’s skill | True ending / cosmetics |
+| Plaques (lore) | Boyhood deals, radio prophecy | Codex only |
+| In-game body | Always Legend | Suit arms, red tie |
+| Power fantasy | Bigger arguments | Weapons + upgrades |
+| Mandate | Player skill | True ending / cosmetics |
 
 **Internal want:** Be the biggest.  
 **External goal:** Reach the Oval.  
+**Conversion fantasy:** Foes **join the Trump-Train** (never die bloody).  
 **Satirical need:** Learn which arguments work on which monsters (style tags).
 
 ---
@@ -78,7 +81,7 @@ Boss intros should always play as **arcade title cards**, not news chyrons.
 
 ---
 
-## Tone Dial (Set With Creator)
+## Tone Dial — LOCKED
 
-Target default: **7/10 absurd, 5/10 partisan spice, 9/10 arcade clarity**.  
-Adjust after vision Q&A.
+**Mythic self-legend:** **9/10 arcade myth · 5/10 meme spice · 3/10 topical rage · 9/10 clarity**.  
+Audio: **synth rock**. Defeat shout: **JOINED THE TRUMP-TRAIN!**

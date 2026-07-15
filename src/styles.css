@@ -132,12 +132,65 @@ h1 {
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.65));
 }
 
+.hud-top {
+  position: absolute;
+  top: 0.75rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+
+.stats-line {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+  text-shadow: 0 1px 3px #000;
+}
+
+.help-line {
+  position: absolute;
+  bottom: 0.35rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  color: rgba(200, 210, 220, 0.55);
+}
+
 .hud-bar {
   max-width: 240px;
 }
 
 .hud-bar:last-of-type {
   justify-self: end;
+}
+
+.convert-toast {
+  position: absolute;
+  left: 50%;
+  top: 28%;
+  transform: translateX(-50%);
+  font-size: clamp(1rem, 3vw, 1.6rem);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: var(--gold);
+  text-shadow:
+    0 0 12px rgba(196, 30, 58, 0.9),
+    2px 2px 0 #000;
+  white-space: nowrap;
+  animation: convert-pop 0.35s ease-out;
+}
+
+@keyframes convert-pop {
+  from {
+    transform: translateX(-50%) scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%) scale(1);
+    opacity: 1;
+  }
 }
 
 .label {
