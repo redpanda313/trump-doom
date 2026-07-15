@@ -103,10 +103,10 @@ export const SHOP_CATALOG: ShopItem[] = [
   { id: 'logic_up', name: 'Logic Upgrade', desc: 'Hotter beam per level', baseCost: 85, unlockAt: 2, stackable: true, maxStacks: 4, category: 'weapon' },
   { id: 'facts_up', name: 'Facts Upgrade', desc: 'Bigger paper storm per level', baseCost: 95, unlockAt: 3, stackable: true, maxStacks: 4, category: 'weapon' },
 
-  // Consumables
-  { id: 'bomb_pack', name: 'Truth Bomb ×2', desc: 'F key — AOE convert burst', baseCost: 35, unlockAt: 1, stackable: true, maxStacks: 20, category: 'consumable' },
-  { id: 'freeze_pack', name: 'Gavel Freeze ×2', desc: 'G key — freeze foes briefly', baseCost: 40, unlockAt: 2, stackable: true, maxStacks: 20, category: 'consumable' },
-  { id: 'repel_pack', name: 'Repellant ×2', desc: 'R key — shove + invuln pulse', baseCost: 45, unlockAt: 3, stackable: true, maxStacks: 20, category: 'consumable' },
+  // Consumables (cheap packs — buy often)
+  { id: 'bomb_pack', name: 'Truth Bomb ×2', desc: 'F key — AOE convert burst', baseCost: 12, unlockAt: 1, stackable: true, maxStacks: 30, category: 'consumable' },
+  { id: 'freeze_pack', name: 'Gavel Freeze ×2', desc: 'C key — freeze foes briefly', baseCost: 14, unlockAt: 2, stackable: true, maxStacks: 30, category: 'consumable' },
+  { id: 'repel_pack', name: 'Repellant ×2', desc: 'V key — shove + invuln pulse', baseCost: 15, unlockAt: 3, stackable: true, maxStacks: 30, category: 'consumable' },
 ];
 
 export function itemCost(item: ShopItem, meta: MetaProgress): number {
@@ -120,8 +120,12 @@ export function itemCost(item: ShopItem, meta: MetaProgress): number {
   else if (item.id === 'freeze_pack') stacks = Math.floor(meta.freezes / 2);
   else if (item.id === 'repel_pack') stacks = Math.floor(meta.repels / 2);
 
-  const scale = 1 + stacks * 0.45 + meta.sectionsCleared * 0.08;
-  return Math.round(item.baseCost * scale);
+  // Consumables scale gently; permanent upgrades scale harder
+  const isConsumable = item.category === 'consumable';
+  const scale = isConsumable
+    ? 1 + stacks * 0.12 + meta.sectionsCleared * 0.03
+    : 1 + stacks * 0.45 + meta.sectionsCleared * 0.08;
+  return Math.max(item.baseCost, Math.round(item.baseCost * scale));
 }
 
 export function canShowItem(item: ShopItem, meta: MetaProgress): boolean {

@@ -1,107 +1,71 @@
 # Trump Doom: The Road to the Oval
 
-**A Doom-inspired browser FPS where young Donald Trump fights satire-spawned chaos with pure rhetoric.**
+**Doom-inspired browser FPS.** Rhetoric combat. Narrative Demons. Trump-Train conversions. Zero blood.
 
-Weapons are debates, framing, logic, and mic drops — not bullets. Enemies are cartoon archetypes (Karens, Woke Mobs, Autopen, Election Fraud, Rogue Judges). Read story plaques on the walls. Upgrade your argument. Claim the Oval.
-
-> **Satire disclaimer:** Arcade political comedy. Non-violent “argument combat.” Exaggerated caricatures only.
+> Arcade political satire. Cartoon caricatures only.
 
 ---
 
-## Status
+## Play now (share this link)
 
-**Phase:** M1 vertical slice (playable)  
-**Vision lock:** [`docs/VISION_LOCK.md`](docs/VISION_LOCK.md)  
-**Design doc:** [`docs/GAME_DESIGN_DOCUMENT.md`](docs/GAME_DESIGN_DOCUMENT.md)
+### https://redpanda313.github.io/trump-doom/
 
-| Milestone | Description |
-|-----------|-------------|
-| M0 | Repo, GDD, shell |
-| **M1** | Ep 0 vertical slice |
-| **Campaign** | **Ep 0–7 full path · multi-track music · 6 endings · death ladder** |
+No install. Open in any modern browser.
 
-### Vision (locked)
-- **Tone:** Mythic self-legend (Doomguy of destiny)
-- **Tech:** Classic 2.5D raycaster
-- **Art:** Hybrid in-engine + Imagine stamps
-- **Hero:** Always adult Legend Donald (childhood = plaques only)
-- **Defeat:** Zero blood — **JOINED THE TRUMP-TRAIN!**
-- **Audio:** Synth rock (procedural for now)
-- **Wishlist:** Leaderboard, local co-op, local vs
+Full friend-friendly instructions: **[PLAY.md](./PLAY.md)**
 
 ---
 
-## Play (when built)
+## Run locally
 
 ```bash
-cd ~/trump-doom
+git clone https://github.com/redpanda313/trump-doom.git
+cd trump-doom
 npm install
 npm run dev
 ```
 
-Open the URL Vite prints — **http://localhost:5180** (not 5173; that port is often used by other projects).
+→ **http://localhost:5180**
 
-If you see a blank white page on 5173, you are almost certainly hitting a *different* app. Use **5180** for Trump Doom.
-
----
-
-## Tech
-
-- **TypeScript** + **Vite**
-- Browser WebGL / Canvas FPS (Three.js candidate for speed)
-- Static deploy (GitHub Pages-ready)
-
----
-
-## Project layout
-
-```
-trump-doom/
-  docs/                 # Game design document & lore
-  public/               # Static shell
-  src/
-    engine/             # Renderer, input, collision, maps
-    game/               # Weapons, enemies, progression, UI
-    assets/             # Sprites, audio, map data
-  tools/                # Asset & map helpers
+```bash
+npm run build    # production files in dist/
+npm run preview  # smoke-test the build
 ```
 
 ---
 
-## Art pipeline
+## What’s in the game
 
-Hybrid approach:
+- Episodes 0–7 campaign + **shops between sections**
+- Permanent upgrades (HP, speed, regen, shield, weapons, consumables)
+- Zone themes, multi-track synth-rock, 6 endings
+- Death ladder, secrets, bosses with ranged attacks
 
-1. **In-engine** geometry, VFX, animations for creatures and attacks  
-2. **Imagine-generated** micro-sprites / icons with removable backgrounds for pickups, UI stamps, title flair  
-
-See GDD §10 for palette and style rules.
+Design docs: [`docs/GAME_DESIGN_DOCUMENT.md`](docs/GAME_DESIGN_DOCUMENT.md) · [`docs/VISION_LOCK.md`](docs/VISION_LOCK.md)
 
 ---
 
-## Controls (planned)
+## Controls
 
-| Action | Default |
-|--------|---------|
+| Action | Input |
+|--------|--------|
 | Move / look | WASD + mouse |
-| **Dash** | Double-tap W/A/S/D, then hold |
-| Fire / alt-fire | LMB / RMB |
-| Interact (plaques) | E |
-| Weapons | 1–2 (more later) |
-| **Pause / volumes** | Esc or Tab |
+| Dash | Double-tap W/A/S/D + hold |
+| Fire / alt | LMB · RMB/Q |
+| Weapons | 1–7 |
+| Bomb / Freeze / Repel | **F** · **C** · **V** |
+| Interact / shop | E |
+| Pause | Esc |
 
 ---
 
-## Contributing / vision
+## Deploy / update the live link
 
-This project is driven by a locked design doc. Open questions for the creator are tracked in the GDD and answered in discussion / issues before major content branches.
+Push to `main`. GitHub Actions builds and deploys Pages automatically  
+(enable once: **Repo → Settings → Pages → Source: GitHub Actions**).
 
 ---
 
 ## License
 
-TBD — all rights reserved until declared.
-
----
-
-*Make arguments great again.*
+All rights reserved until declared. Satire disclaimer on title screen.

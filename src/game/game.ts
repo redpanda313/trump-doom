@@ -1454,16 +1454,46 @@ export class Game {
     this.spawnParticles(e.x, e.y, '#c41e3a', 18);
     this.spawnParticles(e.x, e.y, '#ffd700', 12);
 
-    // Occasional food drops
-    if (e.kind !== 'boss' && Math.random() < (e.elite ? 0.45 : 0.22)) {
-      const kind = Math.random() < 0.5 ? 'resolve' : 'voice';
+    // Occasional food / gold (Brand) drops
+    if (e.kind !== 'boss') {
+      const foodChance = e.elite ? 0.45 : 0.22;
+      const goldChance = e.elite ? 0.4 : 0.18;
+      if (Math.random() < foodChance) {
+        const kind = Math.random() < 0.5 ? 'resolve' : 'voice';
+        const pos = findOpenSpawn(this.map, e.x, e.y);
+        if (pos) {
+          this.pickups.push({
+            kind: 'pickup',
+            x: pos.x,
+            y: pos.y,
+            item: kind,
+            taken: false,
+            flag: `drop_${this.dropSerial++}`,
+          });
+        }
+      }
+      if (Math.random() < goldChance) {
+        const pos = findOpenSpawn(this.map, e.x + 0.3, e.y + 0.3) ?? findOpenSpawn(this.map, e.x, e.y);
+        if (pos) {
+          this.pickups.push({
+            kind: 'pickup',
+            x: pos.x,
+            y: pos.y,
+            item: 'brand',
+            taken: false,
+            flag: `drop_${this.dropSerial++}`,
+          });
+        }
+      }
+    } else if (Math.random() < 0.85) {
+      // Bosses almost always drop gold
       const pos = findOpenSpawn(this.map, e.x, e.y);
       if (pos) {
         this.pickups.push({
           kind: 'pickup',
           x: pos.x,
           y: pos.y,
-          item: kind,
+          item: 'brand',
           taken: false,
           flag: `drop_${this.dropSerial++}`,
         });
