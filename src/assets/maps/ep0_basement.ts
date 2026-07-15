@@ -1,32 +1,29 @@
 import { gridFromStrings, type GameMap } from '../../engine/map';
 
-/**
- * Episode 0 — The Basement of Ambition
- * Tutorial map: move, plaques, gavel, mic, Karen, key, secret, exit.
- */
 const layout = gridFromStrings([
-  // 20 wide x 16 deep
   '11111111111111111111',
   '1........1.........1',
   '1..4..4..1...3...3.1',
   '1........1.........1',
-  '1..1..1..11111311111', // 3 = Red Tie door (needs key)
+  '1..1..1..11111311111',
   '1..1..1......1.....1',
   '1..1..1111...1..5..1',
   '1............1.....1',
   '1111.11111...111.111',
   '1........1.........1',
-  '1..2..2..1...6.....1', // 6 = secret wall
+  '1..2..2..1...6.....1',
   '1........1.........1',
   '1...11...11111.11..1',
   '1...11.............1',
-  '1........7.........1', // near exit gold
+  '1........7.........1',
   '11111111111111111111',
 ]);
 
 export const ep0Basement: GameMap = {
   id: 'ep0_basement',
   name: 'The Basement of Ambition',
+  episode: 0,
+  nextMapId: 'ep1_parking',
   width: layout.width,
   height: layout.height,
   grid: layout.grid,
@@ -71,6 +68,7 @@ export const ep0Basement: GameMap = {
       y: 10.5,
       wallX: 14,
       wallY: 10,
+      flag: 'ep0_secret',
     },
     { type: 'exit', x: 9.5, y: 14.5 },
   ],

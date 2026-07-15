@@ -83,28 +83,7 @@ h1 {
   font-size: 0.95rem;
 }
 
-#btn-start {
-  appearance: none;
-  border: 2px solid var(--gold);
-  background: linear-gradient(180deg, #1a3a6e, #0a1f44);
-  color: var(--gold);
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  padding: 0.9rem 1.6rem;
-  cursor: pointer;
-  font-size: 0.95rem;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
-  box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.3);
-}
 
-#btn-start:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(255, 215, 0, 0.25);
-}
-
-#btn-start:active {
-  transform: translateY(0);
-}
 
 .disclaimer {
   margin-top: 1.5rem;
@@ -140,11 +119,60 @@ h1 {
   text-align: center;
 }
 
+.location-line {
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: #e8e8e8;
+  text-shadow: 0 1px 3px #000;
+  margin-bottom: 0.2rem;
+}
+
 .stats-line {
   font-size: 0.7rem;
   letter-spacing: 0.14em;
   color: var(--gold);
   text-shadow: 0 1px 3px #000;
+}
+
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
+}
+
+#btn-continue,
+#btn-new-game {
+  appearance: none;
+  border: 2px solid var(--gold);
+  background: linear-gradient(180deg, #1a3a6e, #0a1f44);
+  color: var(--gold);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 0.85rem 1.5rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  min-width: 220px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+#btn-continue {
+  background: linear-gradient(180deg, #2d6a1e, #1a3f12);
+  border-color: #82e0aa;
+  color: #d5f5e3;
+}
+
+#btn-continue:hover,
+#btn-new-game:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(255, 215, 0, 0.25);
+}
+
+.save-info {
+  margin-top: 0.75rem;
+  font-size: 0.72rem;
+  color: #8a95a5;
 }
 
 .help-line {
@@ -476,10 +504,13 @@ h1 {
 .pause-actions {
   display: flex;
   justify-content: center;
+  gap: 0.75rem;
   margin-top: 1rem;
+  flex-wrap: wrap;
 }
 
-#btn-resume {
+#btn-resume,
+#btn-save {
   appearance: none;
   border: 2px solid var(--gold);
   background: linear-gradient(180deg, #1a3a6e, #0a1f44);
@@ -491,7 +522,14 @@ h1 {
   font-size: 0.85rem;
 }
 
-#btn-resume:hover {
+#btn-save {
+  border-color: #82e0aa;
+  color: #d5f5e3;
+  background: linear-gradient(180deg, #1e4d2b, #0f2a18);
+}
+
+#btn-resume:hover,
+#btn-save:hover {
   box-shadow: 0 6px 18px rgba(255, 215, 0, 0.25);
 }
 

@@ -1,41 +1,6 @@
 /** Procedural synth-rock bed + combat SFX via Web Audio. */
 
-const STORAGE_KEY = 'trump-doom-audio';
-
-export interface AudioSettings {
-  master: number;
-  music: number;
-  sfx: number;
-}
-
-const DEFAULTS: AudioSettings = {
-  master: 0.8,
-  music: 0.55,
-  sfx: 0.85,
-};
-
-export function loadAudioSettings(): AudioSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
-    const parsed = JSON.parse(raw) as Partial<AudioSettings>;
-    return {
-      master: clamp01(parsed.master ?? DEFAULTS.master),
-      music: clamp01(parsed.music ?? DEFAULTS.music),
-      sfx: clamp01(parsed.sfx ?? DEFAULTS.sfx),
-    };
-  } catch {
-    return { ...DEFAULTS };
-  }
-}
-
-export function saveAudioSettings(s: AudioSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-}
-
-function clamp01(n: number) {
-  return Math.max(0, Math.min(1, n));
-}
+import { loadSettings, saveSettings, type GameSettings } from '../game/settings';
 
 export class GameAudio {
   private ctx: AudioContext | null = null;
@@ -45,7 +10,7 @@ export class GameAudio {
   private musicTimer: number | null = null;
   private step = 0;
   enabled = false;
-  settings: AudioSettings = loadAudioSettings();
+  settings: GameSettings = loadSettings();
 
   async resume() {
     if (!this.ctx) {
@@ -63,30 +28,36 @@ export class GameAudio {
     this.startMusic();
   }
 
-  getSettings(): AudioSettings {
+  getSettings(): GameSettings {
     return { ...this.settings };
   }
 
   setMaster(v: number) {
     this.settings.master = clamp01(v);
-    this.applyGains();
-    saveAudioSettings(this.settings);
+    this.persist();
   }
 
   setMusic(v: number) {
     this.settings.music = clamp01(v);
-    this.applyGains();
-    saveAudioSettings(this.settings);
+    this.persist();
   }
 
   setSfx(v: number) {
     this.settings.sfx = clamp01(v);
+    this.persist();
+  }
+
+  setMouseSensitivity(v: number) {
+    this.settings.mouseSensitivity = Math.max(0.15, Math.min(3, v));
+    saveSettings(this.settings);
+  }
+
+  private persist() {
     this.applyGains();
-    saveAudioSettings(this.settings);
+    saveSettings(this.settings);
   }
 
   private applyGains() {
-    // Base bus levels tuned so sliders at ~0.5–0.8 feel natural
     if (this.master) this.master.gain.value = this.settings.master * 0.55;
     if (this.musicGain) this.musicGain.gain.value = this.settings.music * 0.35;
     if (this.sfxGain) this.sfxGain.gain.value = this.settings.sfx * 0.7;
@@ -212,4 +183,30 @@ export class GameAudio {
     if (!this.ctx || !this.sfxGain) return;
     this.tone(720, this.ctx.currentTime, 0.04, 'square', 0.06, this.sfxGain);
   }
+
+  button() {
+    if (!this.ctx || !this.sfxGain) return;
+    const t = this.ctx.currentTime;
+    this.tone(400, t, 0.06, 'square', 0.12, this.sfxGain);
+    this.tone(600, t + 0.06, 0.08, 'square', 0.1, this.sfxGain);
+  }
+
+  phone() {
+    if (!this.ctx || !this.sfxGain) return;
+    const t = this.ctx.currentTime;
+    this.tone(480, t, 0.1, 'sine', 0.15, this.sfxGain);
+    this.tone(480, t + 0.15, 0.1, 'sine', 0.12, this.sfxGain);
+  }
+
+  levelClear() {
+    if (!this.ctx || !this.sfxGain) return;
+    const t = this.ctx.currentTime;
+    this.tone(523, t, 0.12, 'square', 0.1, this.sfxGain);
+    this.tone(659, t + 0.12, 0.12, 'square', 0.1, this.sfxGain);
+    this.tone(784, t + 0.24, 0.2, 'square', 0.12, this.sfxGain);
+  }
+}
+
+function clamp01(n: number) {
+  return Math.max(0, Math.min(1, n));
 }

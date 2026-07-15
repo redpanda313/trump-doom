@@ -15,6 +15,7 @@
       <div id="hurt-vignette" class="hurt-vignette hidden" aria-hidden="true"></div>
       <div id="hud" class="hud hidden">
         <div class="hud-top">
+          <div id="location-line" class="location-line">The Basement of Ambition</div>
           <div id="stats-line" class="stats-line">TRAIN 0 · PLAQUES 0 · BRAND 0</div>
           <div id="dash-meter" class="dash-meter">
             <span class="dash-label">DASH</span>
@@ -39,12 +40,12 @@
         </div>
         <div id="plaque-toast" class="plaque-toast hidden"></div>
         <div id="convert-toast" class="convert-toast hidden"></div>
-        <div class="help-line">WASD · Double-tap+hold dash · Mouse · LMB fire · E interact · Esc menu</div>
+        <div class="help-line">WASD · Double-tap dash · LMB fire · E interact · Esc menu/save</div>
       </div>
       <div id="pause-menu" class="pause-menu hidden">
         <div class="pause-card">
           <h2>PAUSED</h2>
-          <p class="pause-sub">Settings · Esc to resume</p>
+          <p class="pause-sub">Settings · Auto-saves on pause · Esc to resume</p>
           <label class="slider-row">
             <span>Master</span>
             <input id="vol-master" type="range" min="0" max="100" value="80" />
@@ -60,7 +61,13 @@
             <input id="vol-sfx" type="range" min="0" max="100" value="85" />
             <span class="vol-val" id="vol-sfx-val">85</span>
           </label>
+          <label class="slider-row">
+            <span>Look sens</span>
+            <input id="mouse-sens" type="range" min="20" max="250" value="100" />
+            <span class="vol-val" id="mouse-sens-val">1.00x</span>
+          </label>
           <div class="pause-actions">
+            <button type="button" id="btn-save">SAVE</button>
             <button type="button" id="btn-resume">RESUME</button>
           </div>
           <p class="pause-hint">Double-tap W/A/S/D and hold to dash · Shift sprint</p>
@@ -74,9 +81,13 @@
           <p class="blurb">
             You are the Legend — suited for destiny. Narrative Demons fill the corridors.<br />
             Debate them. Convert them. <strong>Join the Trump-Train.</strong><br />
-            Read the plaques. Claim the exit.
+            Episodes 0–1 ready. Read plaques. Push buttons. Call the manager.
           </p>
-          <button id="btn-start" type="button">ENTER THE BASEMENT</button>
+          <div class="title-actions">
+            <button id="btn-continue" type="button" class="hidden">CONTINUE</button>
+            <button id="btn-new-game" type="button">NEW GAME</button>
+          </div>
+          <p id="save-info" class="save-info hidden"></p>
           <p class="disclaimer">
             Arcade political satire · Non-violent rhetoric combat · Enemies join the Trump-Train · Cartoon caricatures only
           </p>

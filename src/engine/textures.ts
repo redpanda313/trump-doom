@@ -89,6 +89,24 @@ export function createWallTextures(): Map<number, Texture> {
     }),
   );
 
+  // 8 — strip-mall stucco / beige storefront
+  map.set(
+    8,
+    makeTexture((x, y) => {
+      const n = ((x * 3 + y * 5) & 7);
+      return [180 + n, 160 + n, 130 + n];
+    }),
+  );
+
+  // 9 — HOA / chain-link style gate
+  map.set(
+    9,
+    makeTexture((x, y) => {
+      const mesh = (x + y) % 4 === 0 || (x - y) % 4 === 0;
+      return mesh ? [90, 100, 110] : [40, 45, 50];
+    }),
+  );
+
   return map;
 }
 
@@ -159,11 +177,10 @@ export function drawPickupSprite(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  kind: 'resolve' | 'voice' | 'brand' | 'key_red',
+  kind: 'resolve' | 'voice' | 'brand' | 'key_red' | 'key_blue',
 ) {
   ctx.clearRect(0, 0, w, h);
   if (kind === 'resolve') {
-    // cheeseburger
     ctx.fillStyle = '#c4a35a';
     ctx.beginPath();
     ctx.ellipse(w * 0.5, h * 0.4, w * 0.28, h * 0.12, 0, 0, Math.PI * 2);
@@ -187,13 +204,64 @@ export function drawPickupSprite(
     ctx.strokeStyle = '#b8860b';
     ctx.lineWidth = 2;
     ctx.strokeRect(w * 0.3, h * 0.3, w * 0.4, h * 0.35);
+  } else if (kind === 'key_blue') {
+    ctx.fillStyle = '#3498db';
+    ctx.fillRect(w * 0.4, h * 0.2, w * 0.2, h * 0.45);
+    ctx.beginPath();
+    ctx.arc(w * 0.5, h * 0.25, w * 0.14, 0, Math.PI * 2);
+    ctx.fill();
   } else {
-    // red key / red tie pin
     ctx.fillStyle = '#c41e3a';
     ctx.fillRect(w * 0.4, h * 0.2, w * 0.2, h * 0.45);
     ctx.beginPath();
     ctx.arc(w * 0.5, h * 0.25, w * 0.14, 0, Math.PI * 2);
     ctx.fill();
+  }
+}
+
+export function drawButtonSprite(ctx: CanvasRenderingContext2D, w: number, h: number, used: boolean) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = used ? '#555' : '#2ecc71';
+  ctx.fillRect(w * 0.25, h * 0.35, w * 0.5, h * 0.35);
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(w * 0.25, h * 0.35, w * 0.5, h * 0.35);
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.floor(h * 0.12)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(used ? 'OK' : 'BTN', w * 0.5, h * 0.58);
+}
+
+export function drawPhoneSprite(ctx: CanvasRenderingContext2D, w: number, h: number, used: boolean) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = used ? '#444' : '#222';
+  ctx.fillRect(w * 0.3, h * 0.2, w * 0.4, h * 0.55);
+  ctx.fillStyle = used ? '#666' : '#2ecc71';
+  ctx.fillRect(w * 0.35, h * 0.28, w * 0.3, h * 0.2);
+  ctx.strokeStyle = '#ffd700';
+  ctx.strokeRect(w * 0.3, h * 0.2, w * 0.4, h * 0.55);
+  ctx.fillStyle = '#ffd700';
+  ctx.font = `${Math.floor(h * 0.1)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(used ? '…' : '☎', w * 0.5, h * 0.7);
+}
+
+export function drawBossSprite(ctx: CanvasRenderingContext2D, w: number, h: number, frame: number) {
+  ctx.clearRect(0, 0, w, h);
+  // clipboard titan
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(w * 0.2, h * 0.15, w * 0.6, h * 0.7);
+  ctx.fillStyle = '#ecf0f1';
+  ctx.fillRect(w * 0.28, h * 0.25, w * 0.44, h * 0.45);
+  ctx.fillStyle = '#c0392b';
+  ctx.font = `bold ${Math.floor(h * 0.12)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('MGR', w * 0.5, h * 0.48);
+  ctx.fillStyle = '#f1c40f';
+  ctx.fillRect(w * 0.15, h * 0.1, w * 0.7, h * 0.08);
+  if (frame % 2 === 1) {
+    ctx.fillStyle = 'rgba(231,76,60,0.25)';
+    ctx.fillRect(0, 0, w, h);
   }
 }
 

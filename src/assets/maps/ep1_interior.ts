@@ -1,0 +1,92 @@
+import { gridFromStrings, type GameMap } from '../../engine/map';
+
+/**
+ * Episode 1 Map B — Mall Interior
+ * Phone unlocks side gate; red key opens middle doors; exit to boss.
+ */
+const layout = gridFromStrings([
+  // 22 x 20
+  '1111111111111111111111',
+  '1....................1',
+  '1..8....1......8.....1',
+  '1.......1............1',
+  '1..111111......1111..1',
+  '1..1..............1..1',
+  '1..1...2....2.....1..1',
+  '1..1..............1..1',
+  '1..1111..33..111111..1',
+  '1.......3..3.........1',
+  '1.......3..3....5....1',
+  '1..4...........4.....1',
+  '1....................1',
+  '111111119..91111111111',
+  '1....................1',
+  '1...8...........8....1',
+  '1.........7..........1',
+  '1....................1',
+  '1....................1',
+  '1111111111111111111111',
+]);
+
+export const ep1Interior: GameMap = {
+  id: 'ep1_interior',
+  name: 'Food Court of Suffering',
+  episode: 1,
+  nextMapId: 'ep1_boss',
+  width: layout.width,
+  height: layout.height,
+  grid: layout.grid,
+  floorColor: '#4a4038',
+  ceilingColor: '#2a3548',
+  spawn: { x: 2.5, y: 2.5, angle: Math.PI / 2 },
+  entities: [
+    {
+      type: 'plaque',
+      x: 6.5,
+      y: 6.5,
+      id: 'P04',
+      title: "Manager's Note",
+      text: '“I asked for the manager of reality.”',
+    },
+    {
+      type: 'phone',
+      x: 16.5,
+      y: 10.5,
+      flag: 'ep1_phone_gate',
+      label: 'Service Phone',
+      effect: 'open',
+      openCells: [
+        { x: 8, y: 13 },
+        { x: 11, y: 13 },
+      ],
+      message: '“I’d like to speak to the manager!” — Gate unlatched.',
+    },
+    {
+      type: 'button',
+      x: 3.5,
+      y: 11.5,
+      flag: 'ep1_stockroom',
+      label: 'Stockroom Switch',
+      openCells: [{ x: 3, y: 4 }],
+    },
+    { type: 'karen', x: 10.5, y: 3.5 },
+    { type: 'karen', x: 14.5, y: 6.5 },
+    { type: 'karen', x: 5.5, y: 9.5 },
+    { type: 'karen', x: 12.5, y: 12.5 },
+    { type: 'karen', x: 8.5, y: 15.5, elite: true },
+    { type: 'karen', x: 17.5, y: 15.5 },
+    { type: 'pickup', x: 18.5, y: 2.5, kind: 'resolve' },
+    { type: 'pickup', x: 2.5, y: 6.5, kind: 'voice' },
+    { type: 'pickup', x: 10.5, y: 5.5, kind: 'key_red' },
+    { type: 'pickup', x: 19.5, y: 11.5, kind: 'brand' },
+    {
+      type: 'secret_trigger',
+      x: 15.5,
+      y: 10.5,
+      wallX: 16,
+      wallY: 10,
+      flag: 'ep1_secret',
+    },
+    { type: 'exit', x: 10.5, y: 17.5 },
+  ],
+};

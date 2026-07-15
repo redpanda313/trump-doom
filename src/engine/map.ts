@@ -2,27 +2,50 @@
 
 export type WallId = number;
 
-/** 0 = empty. Positive = solid wall texture id. Negative reserved for specials. */
+/** 0 = empty. Positive = solid wall texture id. */
 export interface GameMap {
   id: string;
   name: string;
   width: number;
   height: number;
-  /** Row-major grid[y * width + x] */
   grid: WallId[];
   floorColor: string;
   ceilingColor: string;
   spawn: { x: number; y: number; angle: number };
-  /** World entities placed on map (sprites, plaques, pickups, enemies). */
   entities: MapEntity[];
+  /** Next map id when exit is taken (campaign chain). */
+  nextMapId?: string | null;
+  /** Shown on episode clear / save. */
+  episode?: number;
 }
 
 export type MapEntity =
-  | { type: 'karen'; x: number; y: number }
+  | { type: 'karen'; x: number; y: number; elite?: boolean }
+  | { type: 'boss_manager'; x: number; y: number }
   | { type: 'plaque'; x: number; y: number; title: string; text: string; id: string }
-  | { type: 'pickup'; x: number; y: number; kind: 'resolve' | 'voice' | 'brand' | 'key_red' }
+  | { type: 'pickup'; x: number; y: number; kind: 'resolve' | 'voice' | 'brand' | 'key_red' | 'key_blue' }
   | { type: 'exit'; x: number; y: number }
-  | { type: 'secret_trigger'; x: number; y: number; wallX: number; wallY: number };
+  | { type: 'secret_trigger'; x: number; y: number; wallX: number; wallY: number; flag?: string }
+  | {
+      type: 'button';
+      x: number;
+      y: number;
+      /** Opens these cells (set to 0). */
+      openCells: { x: number; y: number }[];
+      flag: string;
+      label: string;
+    }
+  | {
+      type: 'phone';
+      x: number;
+      y: number;
+      flag: string;
+      label: string;
+      /** 'open' opens cells; 'silence' pauses boss adds; 'toast' only message */
+      effect: 'open' | 'silence' | 'toast';
+      openCells?: { x: number; y: number }[];
+      message: string;
+    };
 
 export function cell(map: GameMap, x: number, y: number): WallId {
   const ix = Math.floor(x);
@@ -38,6 +61,15 @@ export function isSolid(map: GameMap, x: number, y: number): boolean {
 export function setCell(map: GameMap, ix: number, iy: number, value: WallId) {
   if (ix < 0 || iy < 0 || ix >= map.width || iy >= map.height) return;
   map.grid[iy * map.width + ix] = value;
+}
+
+export function cloneMap(src: GameMap): GameMap {
+  return {
+    ...src,
+    grid: [...src.grid],
+    spawn: { ...src.spawn },
+    entities: src.entities.map((e) => structuredClone(e)),
+  };
 }
 
 /** Helper: build grid from string rows (digits 0-9, letters A-F = 10-15). */

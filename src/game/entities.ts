@@ -9,6 +9,7 @@ export interface PlayerState {
   brand: number;
   momentum: number;
   hasRedKey: boolean;
+  hasBlueKey: boolean;
   weapon: WeaponId;
   attackCooldown: number;
   invuln: number;
@@ -27,7 +28,25 @@ export interface KarenEnemy {
   attackCd: number;
   alive: boolean;
   bob: number;
+  elite: boolean;
 }
+
+export interface BossManager {
+  kind: 'boss_manager';
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  speed: number;
+  hurt: number;
+  attackCd: number;
+  spawnCd: number;
+  alive: boolean;
+  bob: number;
+  phase: number;
+}
+
+export type Enemy = KarenEnemy | BossManager;
 
 export interface PlaqueEntity {
   kind: 'plaque';
@@ -43,8 +62,9 @@ export interface PickupEntity {
   kind: 'pickup';
   x: number;
   y: number;
-  item: 'resolve' | 'voice' | 'brand' | 'key_red';
+  item: 'resolve' | 'voice' | 'brand' | 'key_red' | 'key_blue';
   taken: boolean;
+  flag: string;
 }
 
 export interface ExitEntity {
@@ -53,8 +73,32 @@ export interface ExitEntity {
   y: number;
 }
 
+export interface ButtonEntity {
+  kind: 'button';
+  x: number;
+  y: number;
+  openCells: { x: number; y: number }[];
+  flag: string;
+  label: string;
+  used: boolean;
+}
+
+export interface PhoneEntity {
+  kind: 'phone';
+  x: number;
+  y: number;
+  flag: string;
+  label: string;
+  effect: 'open' | 'silence' | 'toast';
+  openCells?: { x: number; y: number }[];
+  message: string;
+  used: boolean;
+  /** Cooldown for re-usable silence phones */
+  cooldown: number;
+}
+
 export interface Floater {
-  x: number; // screen ratio 0-1 or world — we use screen px
+  x: number;
   y: number;
   text: string;
   life: number;
@@ -82,8 +126,6 @@ export interface Projectile {
   kind: 'mic' | 'bubble';
 }
 
-export type WorldEntity = KarenEnemy | PlaqueEntity | PickupEntity | ExitEntity;
-
 export const CONVERSION_LINES = [
   'JOINED THE TRUMP-TRAIN!',
   'ALL ABOARD!',
@@ -94,4 +136,23 @@ export const CONVERSION_LINES = [
 
 export function randomConversionLine(): string {
   return CONVERSION_LINES[(Math.random() * CONVERSION_LINES.length) | 0]!;
+}
+
+export function createDefaultPlayer(spawn: { x: number; y: number; angle: number }): PlayerState {
+  return {
+    x: spawn.x,
+    y: spawn.y,
+    angle: spawn.angle,
+    resolve: 100,
+    voice: 100,
+    brand: 0,
+    momentum: 0,
+    hasRedKey: false,
+    hasBlueKey: false,
+    weapon: 'gavel',
+    attackCooldown: 0,
+    invuln: 0,
+    plaquesRead: new Set(),
+    conversions: 0,
+  };
 }
