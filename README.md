@@ -84,10 +84,11 @@ See GDD §10 for palette and style rules.
 | Action | Default |
 |--------|---------|
 | Move / look | WASD + mouse |
+| **Dash** | Double-tap W/A/S/D, then hold |
 | Fire / alt-fire | LMB / RMB |
 | Interact (plaques) | E |
-| Weapons | 1–8 / scroll |
-| Pause | Esc |
+| Weapons | 1–2 (more later) |
+| **Pause / volumes** | Esc or Tab |
 
 ---
 

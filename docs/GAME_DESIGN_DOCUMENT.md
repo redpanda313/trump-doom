@@ -288,6 +288,124 @@ Each episode = 1–3 maps + boss arena. Doom-like: keys (Red Tie, Blue Check, Go
 4. **Secret ratio** — ~15% of map items behind secrets  
 5. **Safe Rally Points** — Voice regen + lore radio snippets  
 6. **Color-coded keys** with satirical names  
+7. **At least 1 non-combat interaction** per map after Ep 0  
+8. **Novelty budget** — introduce ≤2 new verbs per episode (see §7B)
+
+---
+
+## 7B. Interactions, Buttons, Puzzles & Novelty Pacing
+
+Combat alone will stale. The campaign must keep **new verbs** and **read–act–reward** loops. Rule of thumb: every 2–4 minutes of play, the player should do something that is **not** “walk + shoot rhetoric.”
+
+### 7B.1 Design Goals
+| Goal | Implementation |
+|------|----------------|
+| **Keep novelty high** | Stagger unlocks; never dump all systems in Ep 1 |
+| **Readable fantasy** | Buttons and puzzles use satirical props (phones, forms, channels, gavels) |
+| **Optional depth** | Secrets and hard puzzles reward Brand / plaques / cosmetics, not hard gates (except story doors) |
+| **Teach in safe rooms** | First use of a verb is in a low-threat or zero-threat space |
+| **Boss remix** | Bosses force reuse of earlier puzzle verbs under pressure |
+
+### 7B.2 Player Verbs (Interactables)
+
+All use **E** (interact) unless noted. Some require a **held item** or **weapon tag**.
+
+| Verb ID | Name | What the player does | Fantasy result |
+|---------|------|----------------------|----------------|
+| V01 | **Read Plaque** | E on gold plate | Lore + codex |
+| V02 | **Use Key** | E on matching door with key | Opens path |
+| V03 | **Push Button** | E on wall panel / podium | Toggle door, light, trap, fanfare |
+| V04 | **Pull Lever** | E on lever (often 2-state) | Bridge, bars, conveyor |
+| V05 | **Flip Switch Bank** | Sequence of 2–4 switches | Code / light puzzle |
+| V06 | **Ride Escalator / Pad** | Step on | Vertical transit, set-piece |
+| V07 | **Call Manager Phone** | E on phone (or shoot it) | Summons, distracts, or stops boss adds |
+| V08 | **Stamp Form** | E with Facts weapon charged / item | Clears bureaucratic seal |
+| V09 | **Change Channel** | E on TV stack or remote pedestal | Weak-point swap (Media) |
+| V10 | **Insert Ballot / Card** | E with keycard item | Unlock + short cutscene sting |
+| V11 | **Spin Turnstile** | E or bump with dash | One-way gate comedy |
+| V12 | **Raise Podium** | Hold E to charge | Temporary cover / high ground |
+| V13 | **Rally Banner Plant** | Utility deploy | Team heal zone / Voice regen |
+| V14 | **Press Conference Mic** | E to start timed Q&A | Survive questions = door opens |
+| V15 | **Gavel Slam Console** | Melee interact (Gavel hit) | Break glass / trigger without E |
+| V16 | **Dash Pressure Plate** | Dash across while holding dash | Speed-gate puzzle |
+| V17 | **Mirror / Deepfake Scan** | Stand on pad + Logic beam | Reveals real path |
+| V18 | **Debate Timer Lectern** | E to start, then DPS a target before clock | Arena door |
+| V19 | **Censor Bar Slider** | Mouse/look + E hold to drag | Uncover clue on wall |
+| V20 | **Train Whistle Cord** | E after conversion threshold | Open “Trump-Train” shortcut |
+
+### 7B.3 Puzzle Archetypes
+
+| Archetype | Description | First appears | Example prop |
+|-----------|-------------|---------------|--------------|
+| **Key–Door** | Classic Doom keys | Ep 0 | Red Tie Key |
+| **Button–Door** | Visible cause → effect | Ep 1 | HOA gate opener |
+| **Sequence** | Lights / numbers in order | Ep 1–2 | Intercom codes |
+| **Line of Sight** | Stand where camera sees you | Ep 2 | Security cam + Framing |
+| **Resource Gate** | Spend Voice / Brand to power | Ep 2 | “Pay the fee” meter (satire) |
+| **Escort / Protect** | Keep a prop alive briefly | Ep 3 | Rolling fax machine |
+| **Light / Fog Toggle** | Clear Spin Fog to see path | Ep 3–4 | Constitution lamp |
+| **Maze with Tell** | Wrong paths loop; correct has audio cue | Ep 4 | Ballot warehouse |
+| **Multi-switch race** | Hit A then B before reset | Ep 4–5 | Court clerk windows |
+| **Weapon-gated** | Only Logic / Gavel / Wall works | Ep 5 | Sealed evidence case |
+| **Channel Puzzle** | Cycle TVs to matching symbols | Ep 6 | Control room |
+| **Composite** | 2+ archetypes stacked | Ep 7 | Swamp locks |
+
+### 7B.4 Environmental Hazards & Toys (non-enemy)
+
+| Toy / Hazard | Interaction | Notes |
+|--------------|-------------|-------|
+| Spin Fog vents | Toggle or wait | Reduces beam range |
+| Paper shredder pits | Fall / push enemies | Conversion if enemy falls (comedy) |
+| Moving news tickers | Timing platform | Cosmetic + light cover |
+| Revolving doors | Dash through | Teaches dash |
+| Hot mic zones | Voice regen OR alert enemies | Risk/reward |
+| Protest barricades | Gavel smash or Wall push | Soft destructible |
+| Escalator reverse | Button flips direction | Vertical joke |
+
+### 7B.5 Novelty Introduction Schedule (Pacing)
+
+Introduce **at most two major new verbs** per episode. Combat weapons count as major. Recombine old verbs freely.
+
+| Ep | New major verbs / systems | Reuse focus | Optional spice |
+|----|---------------------------|-------------|----------------|
+| **0** | Move, look, **dash**, gavel, mic, plaque, key–door, secret wall | — | Pickup types |
+| **1** | **Push button**, **phone (Call Manager)**, first elite | Key–door, dash | HOA sequence (2 buttons) |
+| **2** | **Switch bank**, Framing weapon, **line-of-sight cam** | Buttons, dash plates | Safe-space lock (3 lights) |
+| **3** | **Stamp form**, **lever bridge**, Facts weapon | Sequence, phone | Fax escort micro-quest |
+| **4** | **Ballot insert**, fog toggle, Logic laser | Maze tells, race switches | Mirror rooms |
+| **5** | **Gavel console**, injunction break, weapon-gated doors | All prior | Timed lectern debate |
+| **6** | **Change channel**, Charisma, press-conference mic | LOS, sequence | Ratings meter mini-game |
+| **7** | **Composite locks**, whistle cord shortcut, Wall fortress | Full verb set | Deepfake scan for true end path |
+
+### 7B.6 Per-Map Interaction Budget
+
+| Map type | Combat rooms | Interaction / puzzle beats | Secrets |
+|----------|--------------|----------------------------|---------|
+| Tutorial | 1–2 | 2–3 (plaque, key, secret) | 1 |
+| Standard | 3–5 | **2–4** distinct non-combat beats | 1–2 |
+| Hub connector | 0–1 | 1–2 (shop, radio, plaque) | 0–1 |
+| Boss arena | phases | **1–2 mid-fight interactables** (phone, channel, gavel seal) | 0 |
+
+### 7B.7 Mid-Fight Interactables (Boss Rule)
+Every major boss should have **at least one** world interact that players can choose:
+- **Optimal:** faster phase skip / add disable  
+- **Ignoreable:** pure DPS still wins on Stable Genius  
+- **Readable:** glowing gold rim + audio sting when available  
+
+Examples already in boss table: stun Manager phone, seal Hydra with Wall, steal Autopen ink, break Tribunal gavels, change Media channel.
+
+### 7B.8 Feedback Language for Interactables
+- **Idle:** gold pulse outline  
+- **Usable:** “E — [verb]” prompt  
+- **Success:** synth sting + short camera kick + door/machine animation  
+- **Locked:** red outline + reason (“Needs Red Tie Key”, “Needs Logic charge”)  
+- **Failed sequence:** buzzer + reset lights (no Resolve damage)
+
+### 7B.9 Anti-Frustration
+- No pixel-perfect platforming in v1  
+- Puzzle soft-hints after 90s idle in room (radio quip or plaque)  
+- Dash stamina never soft-locks a required dash gate (checkpoint plate refills)  
+- Skip: story doors never require secret-only items  
 
 ---
 
@@ -440,15 +558,23 @@ trump-doom/
 
 | Action | Key |
 |--------|-----|
-| Move | WASD |
+| Move | WASD / Arrows |
+| **Dash** | **Double-tap a move key, then hold** that direction |
+| Sprint | Shift (hold) |
 | Look | Mouse |
-| Fire primary | LMB |
-| Alt-fire | RMB |
+| Fire primary | LMB / Space |
+| Alt-fire | RMB / Q |
 | Weapon switch | 1–8 / scroll |
-| Interact (plaque, door) | E |
-| Utility | Q |
-| Rally / interact hold | F |
-| Pause / map | Esc / Tab |
+| Interact (plaque, door, button, lever) | E |
+| Utility | (loadout slot — later) |
+| **Pause / volume menu** | **Esc** or **Tab** |
+| Volume (in menu) | Master / Music / SFX sliders (saved) |
+
+### 12.1 Resolve (Health) UI
+- Segmented **RESOLVE** bar + numeric %  
+- Face icon mood (healthy → critical)  
+- Red edge vignette on damage; persistent vignette when ≤25%  
+- Cheeseburgers restore Resolve
 | Sprint | Shift |
 
 ---

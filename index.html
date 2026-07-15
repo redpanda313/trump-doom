@@ -12,13 +12,25 @@
   <body>
     <div id="app">
       <canvas id="game-canvas"></canvas>
+      <div id="hurt-vignette" class="hurt-vignette hidden" aria-hidden="true"></div>
       <div id="hud" class="hud hidden">
         <div class="hud-top">
           <div id="stats-line" class="stats-line">TRAIN 0 · PLAQUES 0 · BRAND 0</div>
+          <div id="dash-meter" class="dash-meter">
+            <span class="dash-label">DASH</span>
+            <div class="dash-track"><div id="dash-fill" class="dash-fill"></div></div>
+          </div>
         </div>
-        <div class="hud-bar">
-          <span class="label">RESOLVE</span>
-          <div class="meter"><div id="resolve-fill" class="fill resolve"></div></div>
+        <div class="hud-bar resolve-panel">
+          <div class="resolve-header">
+            <span class="face" id="resolve-face" title="Resolve">😎</span>
+            <span class="label">RESOLVE</span>
+            <span class="resolve-pct" id="resolve-pct">100</span>
+          </div>
+          <div class="meter meter-resolve">
+            <div id="resolve-fill" class="fill resolve"></div>
+            <div class="meter-segments" aria-hidden="true"></div>
+          </div>
         </div>
         <div id="weapon-name" class="weapon-name">DEBATE GAVEL</div>
         <div class="hud-bar">
@@ -27,7 +39,32 @@
         </div>
         <div id="plaque-toast" class="plaque-toast hidden"></div>
         <div id="convert-toast" class="convert-toast hidden"></div>
-        <div class="help-line">WASD · Mouse · LMB/Space fire · RMB/Q alt · 1 Gavel · 2 Mic · E interact/open</div>
+        <div class="help-line">WASD · Double-tap+hold dash · Mouse · LMB fire · E interact · Esc menu</div>
+      </div>
+      <div id="pause-menu" class="pause-menu hidden">
+        <div class="pause-card">
+          <h2>PAUSED</h2>
+          <p class="pause-sub">Settings · Esc to resume</p>
+          <label class="slider-row">
+            <span>Master</span>
+            <input id="vol-master" type="range" min="0" max="100" value="80" />
+            <span class="vol-val" id="vol-master-val">80</span>
+          </label>
+          <label class="slider-row">
+            <span>Music</span>
+            <input id="vol-music" type="range" min="0" max="100" value="55" />
+            <span class="vol-val" id="vol-music-val">55</span>
+          </label>
+          <label class="slider-row">
+            <span>SFX</span>
+            <input id="vol-sfx" type="range" min="0" max="100" value="85" />
+            <span class="vol-val" id="vol-sfx-val">85</span>
+          </label>
+          <div class="pause-actions">
+            <button type="button" id="btn-resume">RESUME</button>
+          </div>
+          <p class="pause-hint">Double-tap W/A/S/D and hold to dash · Shift sprint</p>
+        </div>
       </div>
       <div id="title-screen" class="title-screen">
         <div class="title-card">

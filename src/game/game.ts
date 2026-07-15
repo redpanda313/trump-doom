@@ -52,6 +52,12 @@ export class Game {
   private weaponBob = 0;
   private secretOpened = false;
   private frame = 0;
+  private paused = false;
+  private dashStamina = 100;
+  private dashCooldown = 0;
+  private dashing = false;
+  private hurtFlash = 0;
+  private prevResolve = 100;
 
   // HUD DOM
   private resolveFill: HTMLElement;
@@ -60,6 +66,12 @@ export class Game {
   private plaqueToast: HTMLElement;
   private convertToast: HTMLElement;
   private statsEl: HTMLElement;
+  private resolvePct: HTMLElement;
+  private resolveFace: HTMLElement;
+  private resolveMeter: HTMLElement;
+  private hurtVignette: HTMLElement;
+  private dashFill: HTMLElement;
+  private pauseMenu: HTMLElement;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -106,6 +118,62 @@ export class Game {
     this.plaqueToast = document.getElementById('plaque-toast')!;
     this.convertToast = document.getElementById('convert-toast')!;
     this.statsEl = document.getElementById('stats-line')!;
+    this.resolvePct = document.getElementById('resolve-pct')!;
+    this.resolveFace = document.getElementById('resolve-face')!;
+    this.resolveMeter = document.querySelector('.meter-resolve') as HTMLElement;
+    this.hurtVignette = document.getElementById('hurt-vignette')!;
+    this.dashFill = document.getElementById('dash-fill')!;
+    this.pauseMenu = document.getElementById('pause-menu')!;
+    this.wirePauseMenu();
+  }
+
+  private wirePauseMenu() {
+    const master = document.getElementById('vol-master') as HTMLInputElement;
+    const music = document.getElementById('vol-music') as HTMLInputElement;
+    const sfx = document.getElementById('vol-sfx') as HTMLInputElement;
+    const masterVal = document.getElementById('vol-master-val')!;
+    const musicVal = document.getElementById('vol-music-val')!;
+    const sfxVal = document.getElementById('vol-sfx-val')!;
+    const resume = document.getElementById('btn-resume')!;
+
+    const s = this.audio.getSettings();
+    master.value = String(Math.round(s.master * 100));
+    music.value = String(Math.round(s.music * 100));
+    sfx.value = String(Math.round(s.sfx * 100));
+    masterVal.textContent = master.value;
+    musicVal.textContent = music.value;
+    sfxVal.textContent = sfx.value;
+
+    master.addEventListener('input', () => {
+      this.audio.setMaster(Number(master.value) / 100);
+      masterVal.textContent = master.value;
+    });
+    music.addEventListener('input', () => {
+      this.audio.setMusic(Number(music.value) / 100);
+      musicVal.textContent = music.value;
+    });
+    sfx.addEventListener('input', () => {
+      this.audio.setSfx(Number(sfx.value) / 100);
+      sfxVal.textContent = sfx.value;
+      this.audio.uiClick();
+    });
+    resume.addEventListener('click', () => this.setPaused(false));
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  setPaused(v: boolean) {
+    this.paused = v;
+    if (v) {
+      this.pauseMenu.classList.remove('hidden');
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.audio.uiClick();
+    } else {
+      this.pauseMenu.classList.add('hidden');
+      this.canvas.requestPointerLock();
+    }
   }
 
   private bootstrapEntities() {
@@ -149,13 +217,23 @@ export class Game {
 
   async start() {
     await this.audio.resume();
-    this.showToast('Pointer lock on click · WASD move · Mouse look · LMB fire · E interact', 4);
+    this.showToast('WASD move · Double-tap+hold dash · Esc volume menu · E interact', 4.5);
   }
 
   update(dt: number) {
+    if (this.input.pausePressed) {
+      this.setPaused(!this.paused);
+    }
+
+    if (this.paused) {
+      this.input.endFrame();
+      return;
+    }
+
     if (this.won) {
       this.messageLife -= dt;
       this.updateFloaters(dt);
+      this.input.endFrame();
       return;
     }
 
@@ -166,20 +244,50 @@ export class Game {
     // look
     const sens = 0.0022;
     p.angle += this.input.mouseDX * sens;
-    // move
-    const axis = this.input.axis();
-    const speed = (this.input.sprinting() ? 3.6 : 2.4) * dt;
-    const fx = Math.cos(p.angle);
-    const fy = Math.sin(p.angle);
-    const rx = -fy;
-    const ry = fx;
-    this.tryMove(p.x + (fx * axis.y + rx * axis.x) * speed, p.y);
-    this.tryMove(p.x, p.y + (fy * axis.y + ry * axis.x) * speed);
 
-    this.weaponBob += Math.hypot(axis.x, axis.y) * dt * 12;
+    // dash stamina regen / cooldown
+    if (this.dashCooldown > 0) this.dashCooldown -= dt;
+    if (!this.dashing) {
+      this.dashStamina = Math.min(100, this.dashStamina + dt * 28);
+    }
+
+    // move + dash (double-tap direction and hold)
+    const axis = this.input.axis();
+    const dashVec = this.input.getDashWorldDir(p.angle);
+    const canDash =
+      dashVec && this.dashStamina > 5 && this.dashCooldown <= 0;
+
+    let speed: number;
+    if (canDash && dashVec) {
+      if (!this.dashing) this.audio.dash();
+      this.dashing = true;
+      speed = 7.2 * dt;
+      this.dashStamina = Math.max(0, this.dashStamina - dt * 55);
+      if (this.dashStamina <= 0) {
+        this.dashCooldown = 0.45;
+        this.dashing = false;
+        this.input.dashDir = null;
+      }
+      this.tryMove(p.x + dashVec.x * speed, p.y);
+      this.tryMove(p.x, p.y + dashVec.y * speed);
+      // brief i-frames while dashing through crowds
+      p.invuln = Math.max(p.invuln, 0.05);
+    } else {
+      this.dashing = false;
+      speed = (this.input.sprinting() ? 3.6 : 2.4) * dt;
+      const fx = Math.cos(p.angle);
+      const fy = Math.sin(p.angle);
+      const rx = -fy;
+      const ry = fx;
+      this.tryMove(p.x + (fx * axis.y + rx * axis.x) * speed, p.y);
+      this.tryMove(p.x, p.y + (fy * axis.y + ry * axis.x) * speed);
+    }
+
+    this.weaponBob += Math.hypot(axis.x, axis.y) * dt * (this.dashing ? 20 : 12);
 
     if (p.attackCooldown > 0) p.attackCooldown -= dt;
     if (p.invuln > 0) p.invuln -= dt;
+    if (this.hurtFlash > 0) this.hurtFlash -= dt;
     p.momentum = Math.max(0, p.momentum - dt * 18);
     p.voice = Math.min(100, p.voice + dt * 4);
 
@@ -187,14 +295,6 @@ export class Game {
     if (this.input.weaponSlot === 1) p.weapon = 'gavel';
     if (this.input.weaponSlot === 2) p.weapon = 'mic';
 
-    const lmb = this.input.firePressed || this.input.keys.has('Space');
-    // hold-to-fire for primary while button held — use keys Mouse via mousedown only fires once;
-    // allow Space hold and continuous if we track buttons — for now fire on press + Space hold
-    if (lmb || (this.input.pointerLocked && this.input.keys.has('ControlLeft'))) {
-      // handled below with continuous check
-    }
-    // Continuous fire while mouse held: track via buttons not available easily — use Space or re-click.
-    // Improve: check buttons on pointer lock via a flag set on mousedown/up
     this.handleFire(dt);
 
     if (this.input.interactPressed) this.tryInteract();
@@ -205,10 +305,20 @@ export class Game {
     this.updateFloaters(dt);
     this.updateParticles(dt);
     this.checkExit();
+    this.updateHealthFeedback();
 
     this.messageLife -= dt;
     this.input.endFrame();
-    // re-set fire if still holding — Input clears firePressed; use keys for space
+  }
+
+  private updateHealthFeedback() {
+    const r = this.player.resolve;
+    if (r < this.prevResolve - 0.5) {
+      this.hurtFlash = 0.45;
+      this.resolveFace.classList.add('hurt');
+      window.setTimeout(() => this.resolveFace.classList.remove('hurt'), 200);
+    }
+    this.prevResolve = r;
   }
 
   private fireHeld = false;
@@ -327,12 +437,13 @@ export class Game {
         if (!isSolid(this.map, e.x, ny)) e.y = ny;
       }
 
-      if (dist < 0.7 && e.attackCd <= 0 && p.invuln <= 0) {
+      if (dist < 0.7 && e.attackCd <= 0 && p.invuln <= 0 && !this.dashing) {
         e.attackCd = 1.1;
         p.resolve -= 12;
         p.invuln = 0.6;
         p.momentum = 0;
         this.audio.hurt();
+        this.hurtFlash = 0.55;
         this.spawnParticles(p.x, p.y, '#c41e3a', 6);
         if (p.resolve <= 0) {
           p.resolve = 0;
@@ -580,7 +691,7 @@ export class Game {
     this.displayCtx.drawImage(this.offscreen, 0, 0, dw, dh);
 
     // crosshair
-    this.displayCtx.strokeStyle = 'rgba(255,215,0,0.85)';
+    this.displayCtx.strokeStyle = this.dashing ? 'rgba(0,194,255,0.95)' : 'rgba(255,215,0,0.85)';
     this.displayCtx.lineWidth = 2;
     const cx = dw / 2;
     const cy = dh / 2;
@@ -590,6 +701,12 @@ export class Game {
     this.displayCtx.moveTo(cx, cy - 8);
     this.displayCtx.lineTo(cx, cy + 8);
     this.displayCtx.stroke();
+
+    // motion streak while dashing
+    if (this.dashing) {
+      this.displayCtx.fillStyle = 'rgba(255,215,0,0.06)';
+      this.displayCtx.fillRect(0, 0, dw, dh);
+    }
 
     if (this.messageLife > 0) {
       this.displayCtx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -617,11 +734,37 @@ export class Game {
       this.displayCtx.fillText('M1 vertical slice — Ep 1 next. Refresh to replay.', dw / 2, dh / 2 + 44);
     }
 
-    // HUD DOM
-    this.resolveFill.style.width = `${Math.max(0, p.resolve)}%`;
+    // HUD DOM — Resolve visual indicator
+    const res = Math.max(0, Math.min(100, p.resolve));
+    this.resolveFill.style.width = `${res}%`;
     this.voiceFill.style.width = `${Math.max(0, p.voice)}%`;
+    this.resolvePct.textContent = String(Math.round(res));
+    this.resolvePct.classList.toggle('low', res <= 50 && res > 25);
+    this.resolvePct.classList.toggle('critical', res <= 25);
+    this.resolveMeter.classList.toggle('low', res <= 50 && res > 25);
+    this.resolveMeter.classList.toggle('critical', res <= 25);
+    if (res > 70) this.resolveFace.textContent = '😎';
+    else if (res > 40) this.resolveFace.textContent = '😐';
+    else if (res > 20) this.resolveFace.textContent = '😤';
+    else this.resolveFace.textContent = '😵';
+
+    // hurt / low health vignette
+    this.hurtVignette.classList.remove('hidden', 'active', 'critical');
+    if (res <= 25) {
+      this.hurtVignette.classList.add('critical');
+    } else if (this.hurtFlash > 0) {
+      this.hurtVignette.classList.add('active');
+    } else {
+      this.hurtVignette.classList.add('hidden');
+    }
+
+    // dash meter
+    this.dashFill.style.width = `${Math.max(0, this.dashStamina)}%`;
+    this.dashFill.classList.toggle('ready', this.dashStamina >= 95 && this.dashCooldown <= 0);
+    this.dashFill.classList.toggle('active', this.dashing);
+
     this.weaponName.textContent = weaponLabel(p.weapon);
-    this.statsEl.textContent = `TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand}${p.hasRedKey ? ' · 🔑 RED TIE' : ''}`;
+    this.statsEl.textContent = `TRAIN ${p.conversions} · PLAQUES ${p.plaquesRead.size} · BRAND ${p.brand}${p.hasRedKey ? ' · 🔑 RED TIE' : ''}${this.dashing ? ' · DASH' : ''}`;
   }
 
   private drawWeapon() {
