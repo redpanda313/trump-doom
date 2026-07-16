@@ -23,13 +23,14 @@ export const ROBOT = {
   /** Scramble per arc hit (~4 hits to full) */
   scramblePerHit: 28,
   chaseSpeed: 1.55,
-  allySpeed: 2.05,
-  /** Preferred distance from player while escorting */
-  allyOrbitMin: 1.6,
-  allyOrbitMax: 3.4,
-  allyIdleChance: 0.35,
-  allyIdleMin: 1.2,
-  allyIdleMax: 3.5,
+  allySpeed: 1.85,
+  /** Soft leash — wander freely inside, only pull when farther */
+  allyLeashComfort: 4.5,
+  allyLeashHard: 7.5,
+  allyWanderSpeed: 1.35,
+  allyIdleChance: 0.4,
+  allyIdleMin: 1.4,
+  allyIdleMax: 4.0,
   /** Soft separation radius (don't clump) */
   separateRadius: 1.35,
   separateStrength: 2.8,
@@ -71,10 +72,13 @@ export class RobotUnit {
   fuseT = 0;
   windupT = 0;
   flashPhase = 0;
-  /** Ally escort: orbit angle around player, idle timer */
-  orbitAngle = Math.random() * Math.PI * 2;
+  /** Ally autonomous wander heading (radians) */
+  wanderAngle = Math.random() * Math.PI * 2;
+  wanderTimer = 0.5 + Math.random() * 1.5;
   idleT = 0;
   nextIdleRoll = 1 + Math.random() * 2;
+  /** Last horizontal move dir for facing */
+  faceDir = new THREE.Vector3(0, 0, 1);
 
   private body: THREE.Group;
   private legL: THREE.Mesh;

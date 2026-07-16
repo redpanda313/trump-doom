@@ -716,40 +716,49 @@ export class ForgeHeartGame {
     return push;
   }
 
+  private faceMoveDir(r: RobotUnit, move: THREE.Vector3) {
+    if (move.lengthSq() < 0.0004) return;
+    r.faceDir.copy(move).setY(0).normalize();
+    const look = r.position.clone().add(r.faceDir);
+    r.mesh.lookAt(look.x, r.position.y, look.z);
+  }
+
   private updateAlly(r: RobotUnit, dt: number, playerFeet: THREE.Vector3) {
     r.mode = 'ally';
     const dist = r.position.distanceTo(playerFeet);
     let moving = false;
+    const move = new THREE.Vector3();
 
-    // Idle moments — stand still briefly near the engineer
+    // Idle — face last walk dir, don't stare at player
     if (r.idleT > 0) {
       r.idleT -= dt;
-      // still separate a little so they don't freeze inside each other
       const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
       if (sep.lengthSq() > 0.05) {
-        r.position.addScaledVector(sep.normalize(), ROBOT.allySpeed * 0.45 * dt);
+        const s = sep.normalize();
+        r.position.addScaledVector(s, ROBOT.allySpeed * 0.4 * dt);
+        this.faceMoveDir(r, s);
         moving = true;
+      } else {
+        const look = r.position.clone().add(r.faceDir);
+        r.mesh.lookAt(look.x, r.position.y, look.z);
       }
-      // If player walks away, break idle
-      if (dist > ROBOT.allyOrbitMax + 1.2) r.idleT = 0;
+      if (dist > ROBOT.allyLeashHard * 0.85) r.idleT = 0;
       else {
-        r.mesh.lookAt(playerFeet.x, r.position.y, playerFeet.z);
         r.tickAnim(dt, moving, 'ally');
         this.allyCombatAndRepair(r, dt, playerFeet);
         return;
       }
     }
 
-    // Roll for next idle when close and not fighting
     r.nextIdleRoll -= dt;
     if (r.nextIdleRoll <= 0) {
-      r.nextIdleRoll = 2.5 + Math.random() * 3.5;
-      if (dist < ROBOT.allyOrbitMax + 0.4 && Math.random() < ROBOT.allyIdleChance) {
+      r.nextIdleRoll = 2.8 + Math.random() * 4;
+      if (dist < ROBOT.allyLeashComfort && Math.random() < ROBOT.allyIdleChance) {
         r.idleT = ROBOT.allyIdleMin + Math.random() * (ROBOT.allyIdleMax - ROBOT.allyIdleMin);
       }
     }
 
-    // Engage nearby hostiles first (but keep separation)
+    // Fight nearby hostiles (face the foe only while engaged)
     let foe: RobotUnit | null = null;
     let fd = 6;
     for (const o of this.robots) {
@@ -761,8 +770,6 @@ export class ForgeHeartGame {
       }
     }
 
-    const move = new THREE.Vector3();
-
     if (foe && fd < 7.5) {
       if (fd > 1.5) {
         const toward = foe.position.clone().sub(r.position);
@@ -770,49 +777,68 @@ export class ForgeHeartGame {
         toward.normalize();
         move.addScaledVector(toward, 1);
       }
+      // Face combat target while fighting
       r.mesh.lookAt(foe.position.x, r.position.y, foe.position.z);
+    } else if (dist > ROBOT.allyLeashHard) {
+      // Soft leash only when too far — catch up, then resume wander
+      const toward = playerFeet.clone().sub(r.position);
+      toward.y = 0;
+      toward.normalize();
+      move.addScaledVector(toward, 1.25);
     } else {
-      // Escort: hold a slot on a ring around the player, slowly orbit
-      r.orbitAngle += dt * 0.55;
-      const ringR = (ROBOT.allyOrbitMin + ROBOT.allyOrbitMax) * 0.5;
-      // Spread slots by robot index so allies claim different angles
-      const allies = this.robots.filter((x) => x.phase === 'ally');
-      const idx = Math.max(0, allies.indexOf(r));
-      const slot = r.orbitAngle + (idx * Math.PI * 2) / Math.max(1, allies.length);
-      const target = new THREE.Vector3(
-        playerFeet.x + Math.cos(slot) * ringR,
-        r.position.y,
-        playerFeet.z + Math.sin(slot) * ringR,
-      );
+      // Autonomous wander: pick occasional new headings, drift around
+      r.wanderTimer -= dt;
+      if (r.wanderTimer <= 0) {
+        r.wanderTimer = 1.2 + Math.random() * 2.8;
+        // Prefer continuing forward with a random turn (not orbiting player)
+        r.wanderAngle += (Math.random() - 0.5) * 1.8;
+      }
+      const wander = new THREE.Vector3(Math.cos(r.wanderAngle), 0, Math.sin(r.wanderAngle));
 
-      // If too far, sprint back to player first
-      if (dist > ROBOT.allyOrbitMax + 1.5) {
+      // Mild bias away if a bit close, toward if a bit far — not a ring
+      if (dist < 1.4) {
+        const away = r.position.clone().sub(playerFeet);
+        away.y = 0;
+        if (away.lengthSq() > 0.01) {
+          away.normalize();
+          wander.addScaledVector(away, 0.55);
+        }
+      } else if (dist > ROBOT.allyLeashComfort) {
         const toward = playerFeet.clone().sub(r.position);
         toward.y = 0;
         toward.normalize();
-        move.addScaledVector(toward, 1.35);
-      } else {
-        const toward = target.clone().sub(r.position);
-        toward.y = 0;
-        const td = toward.length();
-        if (td > 0.35) {
-          toward.normalize();
-          move.addScaledVector(toward, 0.9);
-        }
+        // Gentle pull only — still mostly wander
+        wander.addScaledVector(toward, 0.35 + (dist - ROBOT.allyLeashComfort) * 0.12);
       }
-      r.mesh.lookAt(playerFeet.x, r.position.y, playerFeet.z);
+
+      if (wander.lengthSq() > 0.01) {
+        wander.normalize();
+        move.addScaledVector(wander, 0.85);
+      }
     }
 
     // Separation always
     const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
-    // Also soft-avoid hostiles so they don't sit inside enemies
     sep.add(this.separation(r, ROBOT.enemySeparateRadius * 0.9, 1.4, 'hostile'));
     move.add(sep);
 
     if (move.lengthSq() > 0.02) {
-      move.normalize();
-      r.position.addScaledVector(move, ROBOT.allySpeed * dt);
-      moving = true;
+      const dir = move.clone().setY(0);
+      if (dir.lengthSq() > 0.0001) {
+        dir.normalize();
+        const speed =
+          dist > ROBOT.allyLeashHard
+            ? ROBOT.allySpeed
+            : foe && fd < 7.5
+              ? ROBOT.allySpeed * 0.95
+              : ROBOT.allyWanderSpeed;
+        r.position.addScaledVector(dir, speed * dt);
+        moving = true;
+        // Face walk direction unless mid-combat with a foe in melee range
+        if (!(foe && fd < 2.2)) {
+          this.faceMoveDir(r, dir);
+        }
+      }
     }
 
     this.allyCombatAndRepair(r, dt, playerFeet);
