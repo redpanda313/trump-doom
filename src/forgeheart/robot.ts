@@ -39,16 +39,26 @@ export const ROBOT = {
   /** Max simultaneous powered allies */
   maxAllies: 3,
   /**
-   * Plasma economy (single formula, live ally count every tick):
-   *   netPerSec = plasmaRegen - allyUpkeep * allyCount
+   * Plasma economy — equilibrium attractor (live ally count every tick):
    *
-   *   0 allies → +4.0/s
-   *   1 ally   → +1.2/s
-   *   2 allies → −1.6/s
-   *   3 allies → −4.4/s
+   *   dP/dt = k · (P* − P)
+   *
+   * P* is the rest point for the current ally load (does not drain to 0):
+   *   0 allies → 100%   1 → 75%   2 → 67%   3 → 50%
+   *
+   * k is asymmetric: drain-toward-eq vs regen-toward-eq.
+   * More allies → drains from full faster, climbs back slower.
+   * Arc swings spend plasma; below P* you recover toward it.
+   *
+   * Indexed by ally count 0..3
    */
-  plasmaRegen: 4.0,
-  allyUpkeep: 2.8,
+  plasmaEq: [100, 75, 67, 50] as const,
+  /** 1/s rate constant when above equilibrium (settling down) */
+  plasmaDrainK: [0.9, 0.42, 0.72, 1.15] as const,
+  /** 1/s rate constant when below equilibrium (climbing back) */
+  plasmaRegenK: [1.5, 0.95, 0.62, 0.36] as const,
+  /** Plasma spent per arc wrench swing */
+  arcPlasmaCost: 5.5,
   /** Seconds at 0 plasma before an ally risks going rogue */
   allyStarveTime: 2.8,
   /** Vertical motion — step short risers, jump half-walls / stairs */

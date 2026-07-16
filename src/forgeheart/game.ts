@@ -250,10 +250,14 @@ export class ForgeHeartGame {
     const allies = this.countPoweredAllies();
     const dis = this.robots.filter((r) => r.phase === 'disabled' && r.mesh.visible).length;
     const cap = ROBOT.maxAllies;
+    const eq = this.plasmaEquilibrium(allies);
     const net = this.plasmaNetPerSec(allies);
-    const netLabel = `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`;
+    const nearEq = Math.abs(this.plasma - eq) < 1.5;
+    const rateLabel = nearEq
+      ? `EQ ${eq}%`
+      : `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s →${eq}%`;
     const powerWarn = allies > 0 && this.plasma < 15 ? ' · ⚠ LOW' : '';
-    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · ${netLabel}${powerWarn} · DOWN ${dis}${this.onGround ? '' : ' · AIR'}`;
+    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · ${rateLabel}${powerWarn} · DOWN ${dis}${this.onGround ? '' : ' · AIR'}`;
     if (this.locEl) this.locEl.textContent = 'Foundry Annex · ForgeHeart';
 
     if (this.msgT > 0) {
@@ -423,6 +427,8 @@ export class ForgeHeartGame {
     if (this.atkCd > 0) return;
     if (this.weapon === 'wrench') {
       this.atkCd = 0.36;
+      // Arc draws from the grid — dips below equilibrium, then recovers toward it
+      this.plasma = Math.max(0, this.plasma - ROBOT.arcPlasmaCost);
       this.spawnArcFx();
       const origin = this.camera.position.clone();
       const dir = new THREE.Vector3();
@@ -464,7 +470,7 @@ export class ForgeHeartGame {
         this.toast(`Power grid full — only ${ROBOT.maxAllies} allies.`);
         return;
       }
-      const reprogramCost = 18;
+      const reprogramCost = 16;
       if (this.plasma < reprogramCost) {
         this.atkCd = 0.35;
         this.toast(`Need ${reprogramCost} plasma to reprogram (have ${Math.floor(this.plasma)}).`);
@@ -477,10 +483,8 @@ export class ForgeHeartGame {
       best.vy = 0;
       best.onGround = true;
       const next = allyCount + 1;
-      const net = this.plasmaNetPerSec(next);
-      this.flash(
-        `REPROGRAMMED ${next}/${ROBOT.maxAllies} · plasma ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`,
-      );
+      const eq = this.plasmaEquilibrium(next);
+      this.flash(`REPROGRAMMED ${next}/${ROBOT.maxAllies} · grid settles ~${eq}%`);
     }
   }
 
@@ -505,17 +509,31 @@ export class ForgeHeartGame {
     return this.robots.filter((r) => this.isPoweredAlly(r));
   }
 
-  /** Single source of truth for plasma rate (must match tickAllyPower). */
-  private plasmaNetPerSec(allyCount: number): number {
-    return ROBOT.plasmaRegen - ROBOT.allyUpkeep * allyCount;
+  /** Rest point for plasma given current ally load (0..3). */
+  private plasmaEquilibrium(allyCount: number): number {
+    const n = Math.max(0, Math.min(ROBOT.maxAllies, allyCount | 0));
+    return ROBOT.plasmaEq[n]!;
   }
 
   /**
-   * One formula only: plasma += (regen − upkeep×allies) × dt
-   * Ally count is always live — never cached.
+   * Instantaneous dP/dt toward equilibrium.
+   * dP/dt = k · (P* − P)  with separate k for regen vs drain.
+   */
+  private plasmaNetPerSec(allyCount: number, plasma = this.plasma): number {
+    const n = Math.max(0, Math.min(ROBOT.maxAllies, allyCount | 0));
+    const eq = ROBOT.plasmaEq[n]!;
+    const err = eq - plasma;
+    if (Math.abs(err) < 0.05) return 0;
+    // Below eq → regen k; above eq → drain k (err negative)
+    const k = err > 0 ? ROBOT.plasmaRegenK[n]! : ROBOT.plasmaDrainK[n]!;
+    return k * err;
+  }
+
+  /**
+   * Equilibrium attractor — settles at P*(allies), never free-falls to 0
+   * unless the player dumps plasma with arcs / reprograms.
    */
   private tickAllyPower(dt: number) {
-    // Rescue allies that fell out of the world
     for (const r of this.robots) {
       if (r.phase !== 'ally') continue;
       if (r.position.y < -2) {
@@ -528,15 +546,20 @@ export class ForgeHeartGame {
     const allies = this.getPoweredAllies();
     const n = allies.length;
     const net = this.plasmaNetPerSec(n);
-
-    // Single application: no separate regen-then-drain (that felt like random swings)
     this.plasma = Math.max(0, Math.min(100, this.plasma + net * dt));
+
+    // Soft snap when very close (stops micro-jitter at the rest point)
+    const eq = this.plasmaEquilibrium(n);
+    if (Math.abs(this.plasma - eq) < 0.35 && Math.abs(net) < 0.4) {
+      this.plasma = eq;
+    }
 
     if (n === 0) {
       this.allyStarveT = 0;
       return;
     }
 
+    // Starvation only if attacks/reprograms emptied the bar (passive never does)
     if (this.plasma <= 0.05) {
       this.allyStarveT += dt;
       if (Math.floor(this.allyStarveT * 2) !== Math.floor((this.allyStarveT - dt) * 2)) {
@@ -570,15 +593,13 @@ export class ForgeHeartGame {
     r.maxHp = ROBOT.maxHp;
     r.vy = 0;
     r.onGround = true;
-    r.setPhase('active'); // clears ally phase + eyes
+    r.setPhase('active');
     r.mode = 'chase';
     r.returning = false;
     r.fuseT = 0;
-    const left = this.countPoweredAllies(); // already not counting this unit
-    const net = this.plasmaNetPerSec(left);
-    this.flash(
-      `LINK SEVERED — rogue! Grid ${left}/${ROBOT.maxAllies} · ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`,
-    );
+    const left = this.countPoweredAllies();
+    const eq = this.plasmaEquilibrium(left);
+    this.flash(`LINK SEVERED — rogue! Grid ${left}/${ROBOT.maxAllies} · settles ~${eq}%`);
   }
 
   /**
