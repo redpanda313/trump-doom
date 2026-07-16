@@ -7,7 +7,15 @@
 
 ## Elevator pitch
 
-You are a **foundry engineer** in a heartfelt steampunk world of plasma, brass, and loyal automata. Rogue frames threaten the annex. With **arc wrench** and **reprogram hand**, you disable, scrap, or rewrite them — and climb two-story workshops under open sky and under iron beams.
+You are an engineer who lost a brother. In a brass workshop above a floating city, you discover how to seat **souls** in automata — and call **Elias** home with a talisman. Demons can wear frames too. With **reprogram hand** and **arc wrench**, you wake allies, fight possessed scrap, and flee across sky docks.
+
+## Tutorial (first level)
+
+1. **Workshop** — hand only; read photo + journal notes; Elias deactivated on the bench.  
+2. **Wake** — Hand reprogram (or accidental E scrap → collect 3 trays → rebuild).  
+3. **Siege** — 10 door bangs / 3s; claim arc wrench from rack.  
+4. **Breach** — 2 demon bots enter; fight with Elias.  
+5. **Escape** — exterior floating walkway → boat controls (E) to win.
 
 ---
 

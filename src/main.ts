@@ -52,10 +52,10 @@ async function startGame() {
 btnNew.addEventListener('click', () => {
   void startGame();
 });
-btnNew.textContent = 'ENTER THE FOUNDRY';
+btnNew.textContent = 'ENTER THE WORKSHOP';
 
 console.info(
   '%cForgeHeart',
   'color:#c4a35a;font-size:16px;font-weight:bold',
-  '— Gift of the Brass Gods · Three.js vertical slice',
+  '— Gift of the Brass Gods · Brother workshop tutorial',
 );

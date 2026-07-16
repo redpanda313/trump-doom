@@ -6,16 +6,30 @@ export interface Collider {
   max: THREE.Vector3;
 }
 
+export type InteractKind =
+  | 'plaque'
+  | 'photo'
+  | 'note'
+  | 'tray'
+  | 'boat'
+  | 'wrench_pickup'
+  | 'valve'
+  | 'crate';
+
 export interface Interactable {
-  type: 'plaque' | 'valve' | 'crate';
+  type: InteractKind;
   position: THREE.Vector3;
   radius: number;
   mesh: THREE.Object3D;
   title?: string;
   text?: string;
   opened?: boolean;
-  /** Ally channel opens valve */
   needsAlly?: boolean;
+  /** Floating prompt sprite (E) */
+  prompt?: THREE.Object3D;
+  /** Story / tutorial id */
+  id?: string;
+  parts?: number;
 }
 
 export interface LevelBuilt {
@@ -24,12 +38,22 @@ export interface LevelBuilt {
   spawn: THREE.Vector3;
   exit: THREE.Vector3;
   interactables: Interactable[];
-  /** Open sky y for fog/feel */
   mats: Mats;
+  /** Lab exit door mesh + colliders (removed on breach) */
+  labDoor: { meshes: THREE.Object3D[]; colliders: Collider[] };
+  /** World anchors for tutorial scripting */
+  anchors: {
+    brotherSpot: THREE.Vector3;
+    doorSpot: THREE.Vector3;
+    enemySpawns: THREE.Vector3[];
+    traySpots: THREE.Vector3[];
+    boatSpot: THREE.Vector3;
+    wrenchSpot: THREE.Vector3;
+  };
 }
 
-const WALL_H = 3; // full story height in world units
-export const JUMP_H = WALL_H * 0.5; // half wall
+const WALL_H = 3.2;
+export const JUMP_H = WALL_H * 0.5;
 export const PLAYER_H = 1.6;
 export const PLAYER_R = 0.35;
 
@@ -54,10 +78,6 @@ function box(
   return { mesh, col };
 }
 
-/**
- * Visual slab is thin; collision slab is thicker so the player can't tunnel
- * through floors during large physics steps.
- */
 function floorPlane(
   _mats: Mats,
   kind: 'wood' | 'grate' | 'cobble' | 'brass' | 'oil',
@@ -66,7 +86,6 @@ function floorPlane(
   x: number,
   y: number,
   z: number,
-  yRot = 0,
 ): { mesh: THREE.Mesh; col: Collider } {
   const tex = makeFloorTexture(kind);
   tex.repeat.set(w / 3, d / 3);
@@ -77,13 +96,10 @@ function floorPlane(
   });
   const visualH = 0.28;
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, visualH, d), mat);
-  // Top surface at y + visualH/2 ≈ walkable height
   const topY = y + visualH / 2;
   mesh.position.set(x, y, z);
-  mesh.rotation.y = yRot;
   mesh.receiveShadow = true;
   mesh.castShadow = true;
-  // Collision: thick volume below the top surface (harder to fall through)
   const colH = 0.85;
   const col: Collider = {
     min: new THREE.Vector3(x - w / 2, topY - colH, z - d / 2),
@@ -92,7 +108,6 @@ function floorPlane(
   return { mesh, col };
 }
 
-/** Inflate collider slightly for stable contact. */
 export function inflateCollider(c: Collider, skin = 0.02): Collider {
   return {
     min: new THREE.Vector3(c.min.x - skin, c.min.y - skin * 0.25, c.min.z - skin),
@@ -100,282 +115,420 @@ export function inflateCollider(c: Collider, skin = 0.02): Collider {
   };
 }
 
-/** Build Foundry Annex: ground workshop + upper walkway + open courtyard. */
-export function buildFoundryAnnex(): LevelBuilt {
+/** Floating "E" marker above interactables */
+export function makePromptSprite(): THREE.Mesh {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = 'rgba(20,14,8,0.75)';
+  ctx.fillRect(8, 8, 48, 48);
+  ctx.strokeStyle = '#c4a35a';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(10, 10, 44, 44);
+  ctx.fillStyle = '#f0e0b0';
+  ctx.font = 'bold 32px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('E', 32, 34);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.45), mat);
+  m.visible = false;
+  return m;
+}
+
+/**
+ * Tutorial level: brother's workshop lab + exterior floating walkway to escape boat.
+ * Story: engineer brings brother's soul into a frame; demons batter the door.
+ */
+export function buildBrotherWorkshop(): LevelBuilt {
   const mats = makeMaterials();
   const group = new THREE.Group();
   const colliders: Collider[] = [];
   const interactables: Interactable[] = [];
+  const doorMeshes: THREE.Object3D[] = [];
+  const doorCols: Collider[] = [];
 
   const add = (m: THREE.Object3D, col?: Collider) => {
     group.add(m);
     if (col) colliders.push(inflateCollider(col, 0.03));
   };
 
-  // ——— Ground floor hall (interior) ———
-  // Floor wood with oil stain zone
-  {
-    const f = floorPlane(mats, 'wood', 20, 12, 0, 0, 0);
-    add(f.mesh, f.col);
-  }
-  {
-    const f = floorPlane(mats, 'oil', 6, 4, -4, 0.02, 2);
-    add(f.mesh); // decorative overlay — thin, no extra collider needed
-  }
-
-  // Walls room 1
   const wall = (w: number, h: number, d: number, x: number, y: number, z: number, m = mats.brass) => {
     const b = box(mats, m, w, h, d, x, y, z);
     add(b.mesh, b.col);
+    return b;
   };
 
-  // Outer shell ground story (partial — open to courtyard +Z)
-  wall(20.5, WALL_H, 0.4, 0, WALL_H / 2, -6, mats.iron); // south wall
-  wall(0.4, WALL_H, 12, -10, WALL_H / 2, 0, mats.iron); // west
-  wall(0.4, WALL_H, 12, 10, WALL_H / 2, 0, mats.brassDark); // east
-
-  // North interior wall with doorway gap
-  wall(7, WALL_H, 0.4, -6.5, WALL_H / 2, 6, mats.brass);
-  wall(7, WALL_H, 0.4, 6.5, WALL_H / 2, 6, mats.brass);
-
-  // Ceiling beams (interior only, over hall z < 5)
+  // ——— Large workshop floor ———
   {
-    const ceil = box(mats, mats.woodDark, 19.5, 0.3, 11.5, 0, WALL_H + 0.1, 0);
+    const f = floorPlane(mats, 'wood', 22, 16, 0, 0, 0);
+    add(f.mesh, f.col);
+  }
+  {
+    const f = floorPlane(mats, 'oil', 5, 4, 0, 0.02, 1);
+    add(f.mesh);
+  }
+
+  // Outer walls (north wall has door gap later)
+  wall(22.5, WALL_H, 0.45, 0, WALL_H / 2, -8, mats.iron); // south
+  wall(0.45, WALL_H, 16.5, -11, WALL_H / 2, 0, mats.iron); // west
+  wall(0.45, WALL_H, 16.5, 11, WALL_H / 2, 0, mats.brassDark); // east
+
+  // North wall with doorway (center gap ~2.4 wide)
+  wall(9, WALL_H, 0.45, -6.7, WALL_H / 2, 8, mats.brass);
+  wall(9, WALL_H, 0.45, 6.7, WALL_H / 2, 8, mats.brass);
+  // Door leafs (removed on breach)
+  {
+    const left = box(mats, mats.ironDark, 1.15, 2.5, 0.2, -0.7, 1.25, 8);
+    const right = box(mats, mats.ironDark, 1.15, 2.5, 0.2, 0.7, 1.25, 8);
+    const bar = box(mats, mats.brass, 2.5, 0.2, 0.25, 0, 2.55, 8);
+    for (const d of [left, right, bar]) {
+      group.add(d.mesh);
+      const c = inflateCollider(d.col, 0.03);
+      colliders.push(c);
+      doorMeshes.push(d.mesh);
+      doorCols.push(c);
+    }
+  }
+
+  // Ceiling
+  {
+    const ceil = box(mats, mats.woodDark, 22, 0.3, 16.5, 0, WALL_H + 0.1, 0);
     add(ceil.mesh, ceil.col);
   }
-  // Decorative beams
-  for (const bx of [-6, 0, 6]) {
-    const beam = box(mats, mats.wood, 0.4, 0.35, 11, bx, WALL_H - 0.2, 0);
+  for (const bx of [-7, 0, 7]) {
+    const beam = box(mats, mats.wood, 0.4, 0.35, 15, bx, WALL_H - 0.25, 0);
     add(beam.mesh);
   }
 
-  // Window panels on east wall
-  for (const wz of [-3, 0, 3]) {
-    const frame = box(mats, mats.brassDark, 0.15, 1.8, 1.6, 9.7, 1.4, wz);
-    add(frame.mesh);
-    const pane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 1.2), mats.glass);
-    pane.position.set(9.85, 1.4, wz);
-    group.add(pane);
+  // Big industrial windows (west + east)
+  for (const side of [-1, 1] as const) {
+    const x = side * 10.85;
+    for (const wz of [-4.5, -1.5, 1.5, 4.5]) {
+      const frame = box(mats, mats.brassDark, 0.2, 2.2, 2.0, x, 1.6, wz);
+      add(frame.mesh);
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.7, 1.55), mats.glass);
+      pane.position.set(side * 10.95, 1.6, wz);
+      group.add(pane);
+      // Soft daylight
+      const light = new THREE.PointLight(0xffe0b0, 0.45, 10);
+      light.position.set(side * 9.5, 2.0, wz);
+      group.add(light);
+    }
   }
 
-  // Pipes along wall
-  for (const pz of [-4, -1, 2]) {
-    const pipe = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.12, 8, 8),
-      mats.copper,
-    );
+  // Pipes / gears atmosphere
+  for (const pz of [-5, -2, 2, 5]) {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 10, 8), mats.copper);
     pipe.rotation.z = Math.PI / 2;
-    pipe.position.set(0, 2.2, pz);
-    pipe.castShadow = true;
+    pipe.position.set(0, 2.6, pz);
     group.add(pipe);
   }
-
-  // Gear decoration
-  const gear = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.2, 12), mats.brass);
+  const gear = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.18, 14), mats.brass);
   gear.rotation.x = Math.PI / 2;
-  gear.position.set(-8, 1.5, -4.5);
+  gear.position.set(-9, 1.8, -6);
   group.add(gear);
 
-  // ——— Courtyard (open sky) beyond doorway ———
-  {
-    const f = floorPlane(mats, 'cobble', 18, 16, 0, 0, 14);
-    add(f.mesh, f.col);
-  }
-  {
-    const f = floorPlane(mats, 'brass', 3, 14, 0, 0.03, 12);
-    add(f.mesh); // path story
-  }
-
-  // Courtyard walls low + towers
-  wall(18, 1.2, 0.4, 0, 0.6, 22, mats.stone);
-  wall(0.4, 1.2, 16, -9, 0.6, 14, mats.stone);
-  wall(0.4, 1.2, 16, 9, 0.6, 14, mats.stone);
-
-  // ——— Upper walkway (second story) along west of courtyard ———
-  const upperY = WALL_H; // top of first story
-  {
-    const f = floorPlane(mats, 'grate', 4, 14, -6, upperY, 12);
-    add(f.mesh, f.col);
-  }
-  // Side walls / railings for platform (visual solidity)
-  wall(0.2, 0.9, 14, -8, upperY + 0.5, 12, mats.iron);
-  wall(0.2, 0.9, 14, -4, upperY + 0.5, 12, mats.iron);
-  wall(4, 0.9, 0.2, -6, upperY + 0.5, 5, mats.iron);
-  wall(4, 0.9, 0.2, -6, upperY + 0.5, 19, mats.iron);
-  // Support pillars
-  for (const pz of [7, 12, 17]) {
-    const pillar = box(mats, mats.ironDark, 0.5, upperY, 0.5, -6, upperY / 2, pz);
-    add(pillar.mesh, pillar.col);
+  // ——— Workstation (center) ———
+  const bench = box(mats, mats.wood, 3.2, 0.9, 1.6, 0, 0.45, 0.5);
+  add(bench.mesh, bench.col);
+  // Side tables for trays
+  const traySpots = [
+    new THREE.Vector3(-2.8, 0.95, 0.2),
+    new THREE.Vector3(2.8, 0.95, 0.2),
+    new THREE.Vector3(0, 0.95, -1.6),
+  ];
+  const tablePositions = [
+    new THREE.Vector3(-2.8, 0.4, 0.2),
+    new THREE.Vector3(2.8, 0.4, 0.2),
+    new THREE.Vector3(0, 0.4, -1.6),
+  ];
+  for (const tp of tablePositions) {
+    const t = box(mats, mats.woodDark, 1.4, 0.8, 1.0, tp.x, tp.y, tp.z);
+    add(t.mesh, t.col);
   }
 
-  // Stairs from courtyard to upper (thick solid steps — hard to fall through)
-  for (let i = 0; i < 8; i++) {
-    const t = i / 7;
-    const sy = 0.15 + t * (upperY - 0.15);
-    const sz = 6.5 + i * 0.55;
-    const step = box(mats, mats.iron, 2.2, Math.max(0.35, sy), 0.6, -3.5, sy / 2, sz);
-    add(step.mesh, step.col);
-    const top = floorPlane(mats, 'grate', 2.2, 0.6, -3.5, sy, sz);
-    add(top.mesh); // visual only — collision from thick body
-    wall(0.15, Math.max(0.4, sy), 0.6, -4.55, sy / 2, sz, mats.iron);
-  }
-
-  // Half-height platform in courtyard (jump puzzle)
-  {
-    const f = floorPlane(mats, 'brass', 3, 3, 4, JUMP_H / 2, 11);
-    // thicker platform body with sides
-    const body = box(mats, mats.brassDark, 3, JUMP_H, 3, 4, JUMP_H / 2, 11);
-    add(body.mesh, body.col);
-    add(f.mesh);
-  }
-  // Second half platform
-  {
-    const body = box(mats, mats.brassDark, 3, JUMP_H, 3, 7, JUMP_H / 2, 14);
-    add(body.mesh, body.col);
-  }
-
-  // Upper interior loft above workshop (two-story building)
-  {
-    const f = floorPlane(mats, 'wood', 12, 8, 0, upperY, -1);
-    add(f.mesh, f.col);
-  }
-  // Loft walls
-  wall(12, WALL_H * 0.85, 0.35, 0, upperY + (WALL_H * 0.85) / 2, -5, mats.brass);
-  wall(0.35, WALL_H * 0.85, 8, -6, upperY + (WALL_H * 0.85) / 2, -1, mats.brass);
-  wall(0.35, WALL_H * 0.85, 8, 6, upperY + (WALL_H * 0.85) / 2, -1, mats.iron);
-  // Loft ceiling
-  {
-    const c = box(mats, mats.woodDark, 11.5, 0.25, 7.5, 0, upperY + WALL_H * 0.85, -1);
-    add(c.mesh, c.col);
-  }
-  // Stairs inside workshop to loft (solid risers)
-  for (let i = 0; i < 10; i++) {
-    const t = i / 9;
-    const sy = 0.2 + t * (upperY - 0.2);
-    const sx = 7 - i * 0.35;
-    const step = box(mats, mats.wood, 1.5, Math.max(0.35, sy), 1.3, sx, sy / 2, 3.5);
-    add(step.mesh, step.col);
-  }
-
-  // Boiler tank (story prop)
-  {
-    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.4, 2.5, 12), mats.iron);
-    tank.position.set(7, 1.25, -3);
-    tank.castShadow = true;
-    group.add(tank);
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8), mats.copper);
-    cap.position.set(7, 2.6, -3);
-    group.add(cap);
-    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), mats.emissiveAmber);
-    glow.position.set(7, 1.5, -1.7);
-    group.add(glow);
-  }
-
-  // Plaques
-  const addPlaque = (x: number, y: number, z: number, title: string, text: string) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.08), mats.brass);
-    mesh.position.set(x, y, z);
-    group.add(mesh);
+  // Pre-place tray meshes (hidden until brother is scrapped)
+  const trayLabels = ['Heart Chassis', 'Soul Coil', 'Memory Gears'];
+  traySpots.forEach((spot, i) => {
+    const tray = new THREE.Group();
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 0.5), mats.brass);
+    const part = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.25), mats.copper);
+    part.position.y = 0.12;
+    tray.add(base, part);
+    tray.position.copy(spot);
+    tray.visible = false;
+    group.add(tray);
+    const prompt = makePromptSprite();
+    prompt.position.set(spot.x, spot.y + 0.7, spot.z);
+    group.add(prompt);
     interactables.push({
-      type: 'plaque',
-      position: new THREE.Vector3(x, y, z),
-      radius: 1.8,
-      mesh,
-      title,
-      text,
+      type: 'tray',
+      id: `tray_${i}`,
+      position: spot.clone(),
+      radius: 1.6,
+      mesh: tray,
+      prompt,
+      title: trayLabels[i],
+      text: `Workbench tray: ${trayLabels[i]}. Press E to reclaim the part.`,
+      opened: false,
+      parts: 1,
     });
-  };
-  addPlaque(
-    -9.5,
-    1.5,
-    0,
-    'Shift Log',
-    '“The loft holds the old seals. Mind the oil on the boards — the annex remembers every leak.”',
-  );
-  addPlaque(
-    0,
-    1.4,
-    5.6,
-    'Yard Notice',
-    '“Open sky beyond the arch. Brass path leads true. Jump the half-blocks if the stairs feel long.”',
-  );
-  addPlaque(
-    -6,
-    upperY + 1.2,
-    12,
-    'Walkway Rule',
-    '“Disabled frames may be rewritten — or returned to scrap. The hand of the engineer chooses.”',
-  );
+  });
 
-  // Valve (ally opens)
+  // Brother's photograph on south wall
   {
-    const valve = new THREE.Group();
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 0.8, 10), mats.iron);
-    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.08, 8, 16), mats.brass);
-    wheel.position.y = 0.6;
-    wheel.rotation.x = Math.PI / 2;
-    valve.add(base, wheel);
-    valve.position.set(8, 0.4, 18);
-    group.add(valve);
-    // Hidden door (closed wall)
-    const door = box(mats, mats.brassDark, 0.4, 2.4, 2.2, 9.2, 1.2, 18);
-    door.mesh.name = 'hidden_door';
-    add(door.mesh, door.col);
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.08), mats.brass);
+    frame.position.set(-3.5, 1.7, -7.7);
+    group.add(frame);
+    const photo = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.7, 0.85),
+      new THREE.MeshStandardMaterial({ color: 0x6a5538, roughness: 0.9 }),
+    );
+    photo.position.set(-3.5, 1.7, -7.62);
+    group.add(photo);
+    // Simple face suggestion
+    const head = new THREE.Mesh(
+      new THREE.CircleGeometry(0.12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xc4a882 }),
+    );
+    head.position.set(-3.5, 1.9, -7.6);
+    group.add(head);
+    const prompt = makePromptSprite();
+    prompt.position.set(-3.5, 2.5, -7.5);
+    group.add(prompt);
     interactables.push({
-      type: 'valve',
-      position: valve.position.clone(),
+      type: 'photo',
+      id: 'brother_photo',
+      position: new THREE.Vector3(-3.5, 1.7, -7.5),
       radius: 2.2,
-      mesh: valve,
-      title: 'Pressure Valve',
-      text: 'An ally frame can turn this seal…',
-      needsAlly: true,
-      opened: false,
+      mesh: frame,
+      prompt,
+      title: 'Photograph — Elias',
+      text:
+        'Elias Voss, your brother. The card on the back is water-stained: “Taken the spring before the fever. He laughed at the camera — always first into the light.” You buried him under the ash-trees. The lab still smells like his coats.',
     });
-    (valve.userData as { doorMesh?: THREE.Mesh; doorCol?: Collider }).doorMesh = door.mesh;
-    (valve.userData as { doorCol?: Collider }).doorCol = door.col;
   }
 
-  // Crate (ally uncovers loot)
-  {
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1, 1.2), mats.wood);
-    crate.position.set(5, 0.5, 16);
-    crate.castShadow = true;
-    group.add(crate);
+  // Workbench notes
+  const notes: { pos: THREE.Vector3; title: string; text: string }[] = [
+    {
+      pos: new THREE.Vector3(1.2, 1.0, 0.5),
+      title: 'Journal — Consciousness Imprint',
+      text:
+        'I found the coil pattern in Grandfather’s sealed folio: plasma laced through brass can hold a pattern of mind. Not a program — a guest. When the frame is quiet and the talisman is true, a soul may take seat.',
+    },
+    {
+      pos: new THREE.Vector3(-1.1, 1.0, 0.6),
+      title: 'Theory — Souls in Steel',
+      text:
+        'I no longer believe the automata are empty. Something looks out of their eyes when the plasma sings. Demons wear scrap like coats. But love is a beacon too — if I can call Elias home, he will know my voice.',
+    },
+    {
+      pos: new THREE.Vector3(0.2, 1.0, -1.5),
+      title: 'Talisman Note',
+      text:
+        'Wired his pocket-watch gear into the chest plate — the one Mother gave him. If any spark of Elias remains between stars and steam, it will know this weight. Do not scrap the frame. Reprogram with the Hand. Speak his name.',
+    },
+  ];
+  for (const n of notes) {
+    const paper = new THREE.Mesh(
+      new THREE.BoxGeometry(0.45, 0.02, 0.35),
+      new THREE.MeshStandardMaterial({ color: 0xd8c49a, roughness: 0.95 }),
+    );
+    paper.position.copy(n.pos);
+    group.add(paper);
+    const prompt = makePromptSprite();
+    prompt.position.set(n.pos.x, n.pos.y + 0.55, n.pos.z);
+    group.add(prompt);
     interactables.push({
-      type: 'crate',
-      position: crate.position.clone(),
+      type: 'note',
+      id: n.title,
+      position: n.pos.clone(),
+      radius: 1.5,
+      mesh: paper,
+      prompt,
+      title: n.title,
+      text: n.text,
+    });
+  }
+
+  // Wrench on rack (pickup when siege begins — mesh present, interaction gated in game)
+  const wrenchSpot = new THREE.Vector3(4.5, 1.1, -6.5);
+  {
+    const rack = box(mats, mats.iron, 0.8, 1.4, 0.3, 4.5, 0.7, -6.8);
+    add(rack.mesh, rack.col);
+    const wrench = new THREE.Group();
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.12), mats.ironDark);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.15, 0.2), mats.brass);
+    head.position.y = 0.4;
+    wrench.add(handle, head);
+    wrench.position.copy(wrenchSpot);
+    wrench.rotation.z = 0.3;
+    wrench.visible = false;
+    group.add(wrench);
+    const prompt = makePromptSprite();
+    prompt.position.set(wrenchSpot.x, wrenchSpot.y + 0.6, wrenchSpot.z);
+    group.add(prompt);
+    interactables.push({
+      type: 'wrench_pickup',
+      id: 'arc_wrench',
+      position: wrenchSpot.clone(),
       radius: 1.8,
-      mesh: crate,
-      title: 'Sealed Crate',
-      text: 'Brass-bound. An ally can pry it.',
-      needsAlly: true,
+      mesh: wrench,
+      prompt,
+      title: 'Arc Wrench',
+      text: 'Your father’s arc wrench. Plasma teeth for rogue frames. Press E to take it.',
       opened: false,
     });
   }
 
-  // Ambient light helpers already in game — lanterns
+  // Warm lamps
   for (const [lx, ly, lz] of [
-    [-8, 2.5, -2],
-    [8, 2.5, 2],
-    [-6, upperY + 1.5, 12],
-    [3, 2, 15],
+    [-8, 2.4, -5],
+    [8, 2.4, -5],
+    [-8, 2.4, 5],
+    [8, 2.4, 5],
+    [0, 2.6, 0],
   ] as [number, number, number][]) {
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), mats.emissiveAmber);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), mats.emissiveAmber);
     lamp.position.set(lx, ly, lz);
     group.add(lamp);
-    const light = new THREE.PointLight(0xff9944, 1.2, 12);
+    const light = new THREE.PointLight(0xff9944, 1.0, 11);
     light.position.copy(lamp.position);
     group.add(light);
+  }
+
+  // ——— Exterior: floating deck beyond door ———
+  {
+    const f = floorPlane(mats, 'brass', 10, 8, 0, 0, 13);
+    add(f.mesh, f.col);
+  }
+  // Railings
+  wall(10, 0.5, 0.15, 0, 0.4, 17, mats.iron);
+  wall(0.15, 0.5, 8, -5, 0.4, 13, mats.iron);
+  wall(0.15, 0.5, 8, 5, 0.4, 13, mats.iron);
+
+  // Walkway to boat
+  {
+    const f = floorPlane(mats, 'grate', 3.2, 14, 0, 0, 24);
+    add(f.mesh, f.col);
+  }
+  wall(0.12, 0.45, 14, -1.7, 0.35, 24, mats.iron);
+  wall(0.12, 0.45, 14, 1.7, 0.35, 24, mats.iron);
+
+  // Boat platform
+  {
+    const f = floorPlane(mats, 'wood', 6, 5, 0, 0, 33);
+    add(f.mesh, f.col);
+  }
+  // Boat hull
+  const boat = new THREE.Group();
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.8, 4.5), mats.woodDark);
+  hull.position.y = 0.5;
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.0, 1.8), mats.brassDark);
+  cabin.position.set(0, 1.3, -0.5);
+  const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.2, 8), mats.iron);
+  stack.position.set(0, 2.2, -0.3);
+  boat.add(hull, cabin, stack);
+  boat.position.set(0, 0, 33.5);
+  group.add(boat);
+
+  // Steampunk boat controls
+  {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.4), mats.brass);
+    panel.position.set(0, 1.35, 32.2);
+    group.add(panel);
+    const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 6), mats.copper);
+    lever.position.set(0.15, 1.7, 32.2);
+    group.add(lever);
+    const prompt = makePromptSprite();
+    prompt.position.set(0, 2.2, 32.2);
+    group.add(prompt);
+    interactables.push({
+      type: 'boat',
+      id: 'escape_boat',
+      position: new THREE.Vector3(0, 1.4, 32.2),
+      radius: 2.4,
+      mesh: panel,
+      prompt,
+      title: 'Skiff Controls',
+      text: 'Brass levers and a plasma throttle. Press E to cast off — escape with Elias.',
+      opened: false,
+    });
+  }
+
+  // Floating city silhouette (decorative, no collision)
+  const cityMat = mats.ironDark;
+  const skyline: [number, number, number, number, number, number][] = [
+    [-18, 2, 20, 3, 5, 3],
+    [-22, 3, 28, 4, 7, 4],
+    [16, 2.5, 18, 3.5, 6, 3],
+    [20, 4, 30, 5, 8, 4],
+    [-14, 1.5, 36, 2.5, 4, 2.5],
+    [12, 2, 40, 3, 5, 3],
+    [-8, 5, 45, 4, 3, 4],
+    [8, 3, 48, 6, 4, 3],
+  ];
+  for (const [x, y, z, w, h, d] of skyline) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), cityMat);
+    b.position.set(x, y, z);
+    group.add(b);
+    // little walkway connectors
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(x) * 0.3, 0.15, 0.4), mats.brassDark);
+    bridge.position.set(x * 0.4, y - h * 0.3, z - 2);
+    group.add(bridge);
+  }
+  // Fog-ish sky discs
+  for (const [x, z] of [
+    [-25, 22],
+    [24, 26],
+    [-20, 42],
+    [18, 44],
+  ] as [number, number][]) {
+    const cloud = new THREE.Mesh(
+      new THREE.SphereGeometry(2.5, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xc4b8a0, transparent: true, opacity: 0.35 }),
+    );
+    cloud.position.set(x, 8, z);
+    group.add(cloud);
+  }
+
+  // Void safety platforms under walkway (invisible catch)
+  {
+    const catcher = box(mats, mats.stone, 14, 0.4, 40, 0, -2.5, 18);
+    catcher.mesh.visible = false;
+    add(catcher.mesh, catcher.col);
   }
 
   return {
     group,
     colliders,
-    spawn: new THREE.Vector3(0, 0.1, -3),
-    exit: new THREE.Vector3(0, 0.1, 20),
+    spawn: new THREE.Vector3(0, 0.1, -5.5),
+    exit: new THREE.Vector3(0, 0.1, 33),
     interactables,
     mats,
+    labDoor: { meshes: doorMeshes, colliders: doorCols },
+    anchors: {
+      brotherSpot: new THREE.Vector3(0, 0, 1.8),
+      doorSpot: new THREE.Vector3(0, 0, 8),
+      enemySpawns: [new THREE.Vector3(-1.2, 0, 10.5), new THREE.Vector3(1.2, 0, 10.5)],
+      traySpots,
+      boatSpot: new THREE.Vector3(0, 0, 33),
+      wrenchSpot,
+    },
   };
+}
+
+/** @deprecated use buildBrotherWorkshop — kept name for any old imports */
+export function buildFoundryAnnex(): LevelBuilt {
+  return buildBrotherWorkshop();
 }
 
 export function aabbOverlap(

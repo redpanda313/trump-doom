@@ -125,6 +125,10 @@ export class RobotUnit {
   vy = 0;
   onGround = true;
   jumpCd = 0;
+  /** Tutorial: brother's soul-frame (special toast / identity) */
+  isBrother = false;
+  /** Display name for story moments */
+  displayName = 'Frame';
 
   private body: THREE.Group;
   private legL: THREE.Mesh;
@@ -198,15 +202,18 @@ export class RobotUnit {
     this.phase = p;
     this.mode = p === 'ally' ? 'ally' : p === 'disabled' ? 'disabled' : 'chase';
     if (p === 'disabled') {
-      this.body.rotation.x = 0.4;
+      // Leaned forward — deactivated on the workbench
+      this.body.rotation.x = this.isBrother ? 0.72 : 0.45;
+      this.body.position.y = this.isBrother ? -0.08 : 0;
       this.setEyes('off');
       this.fuseT = 0;
       this.windupT = 0;
     } else if (p === 'ally') {
       this.body.rotation.x = 0;
+      this.body.position.y = 0;
       this.setEyes('ally');
-      this.hp = 45;
-      this.maxHp = 45;
+      this.hp = this.isBrother ? 60 : 45;
+      this.maxHp = this.isBrother ? 60 : 45;
       this.scramble = 0;
       this.scrambled = false;
       this.fuseT = 0;

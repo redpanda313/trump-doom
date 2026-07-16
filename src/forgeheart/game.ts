@@ -1,12 +1,12 @@
 /**
- * ForgeHeart: Gift of the Brass Gods — Three.js vertical slice
+ * ForgeHeart: Gift of the Brass Gods — Tutorial (Brother's Workshop)
  * Solid 3D platforming; separate product from Trump Doom.
  */
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js';
 import {
-  buildFoundryAnnex,
+  buildBrotherWorkshop,
   JUMP_H,
   PLAYER_H,
   PLAYER_R,
@@ -22,6 +22,7 @@ import {
   createBlastFx,
   ROBOT,
 } from './robot';
+import { ForgeAudio } from './audio';
 
 const GRAVITY = 28;
 const MOVE_SPEED = 7;
@@ -29,12 +30,22 @@ const JUMP_VEL = Math.sqrt(2 * GRAVITY * JUMP_H);
 
 type Weapon = 'hand' | 'wrench';
 
+/** Tutorial progression */
+type TutorialPhase =
+  | 'explore' // lab, hand only, brother disabled
+  | 'rebuild' // scrapped brother — gather trays
+  | 'siege' // ally online, demons banging
+  | 'breach' // door open, fight 2 demons
+  | 'escape' // get to the boat
+  | 'won';
+
 export class ForgeHeartGame {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private controls: PointerLockControls;
   private clock = new THREE.Clock();
+  private audio = new ForgeAudio();
 
   private level: LevelBuilt;
   private colliders: Collider[] = [];
@@ -46,7 +57,8 @@ export class ForgeHeartGame {
   private plasma = 100;
   private brass = 0;
   private gears = 0;
-  private weapon: Weapon = 'wrench';
+  private weapon: Weapon = 'hand';
+  private wrenchUnlocked = false;
   private atkCd = 0;
   private invuln = 0;
   private arcMesh: THREE.Mesh | null = null;
@@ -67,15 +79,25 @@ export class ForgeHeartGame {
   private locEl: HTMLElement | null;
   private toastEl: HTMLElement;
   private convertEl: HTMLElement;
+  private helpEl: HTMLElement | null = null;
   private msg = '';
   private msgT = 0;
 
   private fireHeld = false;
-  /** Last stable standing position — used if we fall through the world */
   private safePos = new THREE.Vector3();
   private safeTimer = 0;
-  /** Time spent at 0 plasma while holding allies */
   private allyStarveT = 0;
+
+  // ——— Tutorial state ———
+  private tutorial: TutorialPhase = 'explore';
+  private traysCollected = 0;
+  private bangCount = 0;
+  private bangTimer = 0;
+  private readonly bangsTotal = 10;
+  private readonly bangInterval = 3;
+  private brotherScrapped = false;
+  private hadAllyOnce = false;
+  private objective = 'Read the lab. Wake Elias with the Hand (1) — do not scrap him.';
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -87,57 +109,40 @@ export class ForgeHeartGame {
     this.camera = new THREE.PerspectiveCamera(70, canvas.clientWidth / canvas.clientHeight, 0.08, 120);
     this.controls = new PointerLockControls(this.camera, canvas);
 
-    this.scene.background = new THREE.Color(0x3d2818);
-    this.scene.fog = new THREE.Fog(0x4a3020, 18, 55);
+    // Warm lab interior; cooler open sky outside
+    this.scene.background = new THREE.Color(0x6a8aaa);
+    this.scene.fog = new THREE.Fog(0x8a9aaa, 22, 70);
 
-    // Lights
-    const hemi = new THREE.HemisphereLight(0xffd0a0, 0x2a2018, 0.55);
+    const hemi = new THREE.HemisphereLight(0xffe8c8, 0x3a3028, 0.6);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffe0b0, 1.1);
-    sun.position.set(12, 24, 8);
+    const sun = new THREE.DirectionalLight(0xfff0d0, 1.15);
+    sun.position.set(8, 28, 14);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 60;
-    sun.shadow.camera.left = -25;
-    sun.shadow.camera.right = 25;
-    sun.shadow.camera.top = 25;
-    sun.shadow.camera.bottom = -25;
+    sun.shadow.camera.far = 80;
+    sun.shadow.camera.left = -30;
+    sun.shadow.camera.right = 30;
+    sun.shadow.camera.top = 30;
+    sun.shadow.camera.bottom = -30;
     this.scene.add(sun);
 
-    this.level = buildFoundryAnnex();
+    this.level = buildBrotherWorkshop();
     this.scene.add(this.level.group);
     this.colliders = [...this.level.colliders];
     this.interactables = this.level.interactables;
     this.exit = this.level.exit.clone();
 
-    // Exit marker
-    const exitMat = new THREE.MeshStandardMaterial({
-      color: 0xc47830,
-      emissive: 0x884400,
-      emissiveIntensity: 0.4,
-    });
-    const exitMesh = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.2, 0.3), exitMat);
-    exitMesh.position.set(this.exit.x, 1.1, this.exit.z);
-    this.scene.add(exitMesh);
+    // Only Elias — deactivated, leaned on the workstation
+    const brother = new RobotUnit(this.level.mats, this.level.anchors.brotherSpot.clone());
+    brother.isBrother = true;
+    brother.displayName = 'Elias';
+    brother.setPhase('disabled');
+    brother.scramble = 100;
+    brother.scrambled = true;
+    this.robots.push(brother);
+    this.scene.add(brother.mesh);
 
-    // Spawn robots
-    const spots = [
-      new THREE.Vector3(3, 0, 2),
-      new THREE.Vector3(-5, 0, 1),
-      new THREE.Vector3(2, 0, 12),
-      new THREE.Vector3(6, 0, 15),
-      new THREE.Vector3(-5, JUMP_H, 11), // on platform
-      new THREE.Vector3(-6, 3, 14), // upper walkway
-      new THREE.Vector3(2, 3, -2), // loft
-    ];
-    for (const s of spots) {
-      const r = new RobotUnit(this.level.mats, s);
-      this.robots.push(r);
-      this.scene.add(r.mesh);
-    }
-
-    // Player start (feet on spawn collider top)
     this.camera.position.set(
       this.level.spawn.x,
       this.level.spawn.y + PLAYER_H * 0.9 + 0.2,
@@ -145,7 +150,6 @@ export class ForgeHeartGame {
     );
     this.safePos.copy(this.camera.position);
 
-    // HUD
     this.hpFill = document.getElementById('resolve-fill')!;
     this.plasmaFill = document.getElementById('voice-fill')!;
     this.weaponEl = document.getElementById('weapon-name')!;
@@ -153,6 +157,7 @@ export class ForgeHeartGame {
     this.locEl = document.getElementById('location-line');
     this.toastEl = document.getElementById('plaque-toast')!;
     this.convertEl = document.getElementById('convert-toast')!;
+    this.helpEl = document.querySelector('.help-line');
     const face = document.getElementById('resolve-face');
     if (face) face.textContent = '⚙️';
     document.querySelectorAll('.hud-bar .label').forEach((el) => {
@@ -162,6 +167,7 @@ export class ForgeHeartGame {
 
     this.bindInput();
     window.addEventListener('resize', () => this.onResize());
+    this.setHelp('WASD look · E read / interact · 1 Hand reprogram · Space jump');
   }
 
   private bindInput() {
@@ -169,7 +175,10 @@ export class ForgeHeartGame {
       this.keys.add(e.code);
       if (e.code === 'Space') e.preventDefault();
       if (e.code === 'Digit1') this.weapon = 'hand';
-      if (e.code === 'Digit2') this.weapon = 'wrench';
+      if (e.code === 'Digit2') {
+        if (this.wrenchUnlocked) this.weapon = 'wrench';
+        else this.toast('Arc wrench is on the wall rack — claim it when the door fails.');
+      }
       if (e.code === 'KeyE') this.tryInteract();
       if (e.code === 'Escape') {
         this.paused = !this.paused;
@@ -188,10 +197,16 @@ export class ForgeHeartGame {
   }
   setAltHeld(_v: boolean) {}
 
+  private setHelp(t: string) {
+    if (this.helpEl) this.helpEl.textContent = t;
+  }
+
   async start() {
+    await this.audio.resume();
+    this.flash('The Workshop — Elias waits on the bench');
     this.toast(
-      'ForgeHeart — Space jump · 1 Hand · 2 Wrench · E scrap/valve · Allies open seals',
-      5,
+      'Your brother is gone. The frame holds a talisman of his. Walk the lab. Read. Then use the Hand (1) to wake him — not scrap (E).',
+      8,
     );
     this.controls.lock();
   }
@@ -207,6 +222,8 @@ export class ForgeHeartGame {
     this.atkCd = Math.max(0, this.atkCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
     this.tickAllyPower(dt);
+    this.tickTutorial(dt);
+    this.updateInteractPrompts();
 
     // Movement relative to camera yaw
     const forward = new THREE.Vector3();
@@ -246,19 +263,28 @@ export class ForgeHeartGame {
     this.plasmaFill.style.width = `${this.plasma}%`;
     const pct = document.getElementById('resolve-pct');
     if (pct) pct.textContent = String(Math.round(this.health));
-    this.weaponEl.textContent = this.weapon === 'hand' ? 'REPROGRAM HAND' : 'ARC WRENCH';
+    this.weaponEl.textContent =
+      this.weapon === 'hand'
+        ? 'REPROGRAM HAND'
+        : this.wrenchUnlocked
+          ? 'ARC WRENCH'
+          : 'HAND ONLY';
     const allies = this.countPoweredAllies();
-    const dis = this.robots.filter((r) => r.phase === 'disabled' && r.mesh.visible).length;
-    const cap = ROBOT.maxAllies;
     const eq = this.plasmaEquilibrium(allies);
     const net = this.plasmaNetPerSec(allies);
     const nearEq = Math.abs(this.plasma - eq) < 1.5;
-    const rateLabel = nearEq
-      ? `EQ ${eq}%`
-      : `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s →${eq}%`;
-    const powerWarn = allies > 0 && this.plasma < 15 ? ' · ⚠ LOW' : '';
-    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · ${rateLabel}${powerWarn} · DOWN ${dis}${this.onGround ? '' : ' · AIR'}`;
-    if (this.locEl) this.locEl.textContent = 'Foundry Annex · ForgeHeart';
+    const rateLabel =
+      allies === 0
+        ? 'PLASMA STEADY'
+        : nearEq
+          ? `EQ ${eq}%`
+          : `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s →${eq}%`;
+    this.statsEl.textContent = `${this.objective} · ${rateLabel}`;
+    if (this.locEl) {
+      const z = this.camera.position.z;
+      this.locEl.textContent =
+        z > 9 ? 'Sky Docks · Escape' : 'Voss Workshop · Tutorial';
+    }
 
     if (this.msgT > 0) {
       // drawn via toast element for plaques; on-canvas for short msgs in render
@@ -426,8 +452,12 @@ export class ForgeHeartGame {
   private tryFire() {
     if (this.atkCd > 0) return;
     if (this.weapon === 'wrench') {
+      if (!this.wrenchUnlocked) {
+        this.toast('You only have the Hand for now.');
+        this.weapon = 'hand';
+        return;
+      }
       this.atkCd = 0.36;
-      // Arc draws from the grid — dips below equilibrium, then recovers toward it
       this.plasma = Math.max(0, this.plasma - ROBOT.arcPlasmaCost);
       this.spawnArcFx();
       const origin = this.camera.position.clone();
@@ -442,15 +472,15 @@ export class ForgeHeartGame {
         if (to.dot(dir) < 0.52) continue;
         const res = r.applyArc(ROBOT.arcDamage, ROBOT.scramblePerHit);
         if (res === 'disabled') {
-          this.flash('KNOCKED OUT — E scrap · Hand reprogram');
+          this.flash('KNOCKED OUT — eyes dark. Hand reprogram or E scrap');
         } else if (res === 'scrambled') {
-          this.flash('SCRAMBLE FULL — eyes dark! Hand to rewrite while it still walks');
+          this.flash('SCRAMBLE FULL — Hand (1) to rewrite while it still walks');
         }
       }
     } else {
-      // Reprogram: scrambled (eyes out) OR disabled
+      // Reprogram: scrambled OR disabled
       let best: RobotUnit | null = null;
-      let bestD = 2.4;
+      let bestD = 2.6;
       for (const r of this.robots) {
         if (!r.reprogramReady) continue;
         const d = r.position.distanceTo(this.camera.position);
@@ -461,7 +491,11 @@ export class ForgeHeartGame {
       }
       if (!best) {
         this.atkCd = 0.35;
-        this.toast('Need scramble-full (dark eyes) or knocked-out frame nearby.');
+        this.toast(
+          this.tutorial === 'explore' || this.tutorial === 'rebuild'
+            ? 'Stand close to the deactivated frame. Click with Hand (1) to wake a soul.'
+            : 'Need a scramble-full or knocked-out frame nearby.',
+        );
         return;
       }
       const allyCount = this.countPoweredAllies();
@@ -470,10 +504,10 @@ export class ForgeHeartGame {
         this.toast(`Power grid full — only ${ROBOT.maxAllies} allies.`);
         return;
       }
-      const reprogramCost = 16;
+      const reprogramCost = best.isBrother ? 12 : 16;
       if (this.plasma < reprogramCost) {
         this.atkCd = 0.35;
-        this.toast(`Need ${reprogramCost} plasma to reprogram (have ${Math.floor(this.plasma)}).`);
+        this.toast(`Need ${reprogramCost} plasma (have ${Math.floor(this.plasma)}).`);
         return;
       }
       this.atkCd = 0.5;
@@ -482,9 +516,144 @@ export class ForgeHeartGame {
       best.returning = false;
       best.vy = 0;
       best.onGround = true;
-      const next = allyCount + 1;
-      const eq = this.plasmaEquilibrium(next);
-      this.flash(`REPROGRAMMED ${next}/${ROBOT.maxAllies} · grid settles ~${eq}%`);
+      this.audio.playReprogram();
+      if (best.isBrother) {
+        this.flash('ELIAS — the talisman finds him. Green eyes. Your brother.');
+        this.toast('Plasma will settle near three-quarters with one ally. Stay close to him.', 5);
+      } else {
+        const eq = this.plasmaEquilibrium(allyCount + 1);
+        this.flash(`REPROGRAMMED · grid settles ~${eq}%`);
+      }
+      this.onAllyCreated();
+    }
+  }
+
+  private onAllyCreated() {
+    if (this.hadAllyOnce) return;
+    this.hadAllyOnce = true;
+    if (this.tutorial === 'explore' || this.tutorial === 'rebuild') {
+      this.beginSiege();
+    }
+  }
+
+  private beginSiege() {
+    this.tutorial = 'siege';
+    this.bangCount = 0;
+    this.bangTimer = 1.2;
+    this.audio.setTension(0.55);
+    this.objective = 'Something is at the door…';
+    this.setHelp('Protect Elias · wait · grab the Arc Wrench when it appears');
+    this.flash('A BANG at the lab door —');
+    this.toast('Demon-ridden frames. Hold the workshop. The door will not hold forever.', 5);
+    // Reveal wrench on the rack
+    for (const it of this.interactables) {
+      if (it.type === 'wrench_pickup') {
+        it.mesh.visible = true;
+        if (it.prompt) it.prompt.visible = true;
+      }
+    }
+  }
+
+  private tickTutorial(dt: number) {
+    if (this.tutorial === 'siege') {
+      this.bangTimer -= dt;
+      if (this.bangTimer <= 0) {
+        this.bangCount++;
+        this.bangTimer = this.bangInterval;
+        const intensity = 0.55 + (this.bangCount / this.bangsTotal) * 0.55;
+        this.audio.playBang(intensity);
+        this.audio.setTension(0.4 + (this.bangCount / this.bangsTotal) * 0.6);
+        // Rattle door meshes
+        for (const m of this.level.labDoor.meshes) {
+          m.position.x += (Math.random() - 0.5) * 0.04 * intensity;
+        }
+        if (this.bangCount === 1) {
+          this.toast('BANG. The iron door shudders.', 2);
+        } else if (this.bangCount === 5) {
+          this.toast('Five strikes. Take the Arc Wrench from the rack (E).', 4);
+          this.objective = 'Take the Arc Wrench (E) — the door is failing';
+        } else if (this.bangCount === 8) {
+          this.toast('Almost through — stand ready with Elias.', 3);
+        }
+        if (this.bangCount >= this.bangsTotal) {
+          this.breachDoor();
+        } else {
+          this.objective = `Door under assault · ${this.bangCount}/${this.bangsTotal}`;
+        }
+      }
+    }
+
+    if (this.tutorial === 'breach' || this.tutorial === 'escape') {
+      const hostiles = this.robots.filter((r) => r.phase === 'active' && r.mesh.visible).length;
+      if (hostiles === 0 && this.tutorial === 'breach') {
+        this.tutorial = 'escape';
+        this.objective = 'Reach the escape skiff on the sky dock';
+        this.setHelp('Follow the walkway · E on boat controls to cast off');
+        this.flash('Demons down — get to the boat!');
+        this.toast('Outside: a floating city. The skiff waits at the end of the brass walkway.', 5);
+        this.audio.setTension(0.15);
+      }
+    }
+  }
+
+  private breachDoor() {
+    this.tutorial = 'breach';
+    this.audio.setTension(1);
+    this.audio.playBang(1.2);
+    // Remove door collision + hide meshes
+    for (const m of this.level.labDoor.meshes) {
+      m.visible = false;
+      m.position.y = -40;
+    }
+    const doorSet = new Set(this.level.labDoor.colliders);
+    this.colliders = this.colliders.filter((c) => !doorSet.has(c));
+    // Spawn 2 demon bots
+    for (const spot of this.level.anchors.enemySpawns) {
+      const r = new RobotUnit(this.level.mats, spot.clone());
+      r.displayName = 'Possessed Frame';
+      r.setPhase('active');
+      r.aggro = true;
+      this.robots.push(r);
+      this.scene.add(r.mesh);
+    }
+    this.objective = 'Survive — arc the demons, keep Elias close';
+    this.setHelp('2 Wrench · scramble or KO · Hand reprogram optional · flee to the dock if needed');
+    this.flash('THE DOOR GIVES — two demon frames!');
+    this.toast('They wear scrap like coats. Arc wrench for combat. Elias will fight beside you.', 5);
+    // Auto-offer wrench if not taken
+    if (!this.wrenchUnlocked) {
+      this.toast('Arc Wrench still on the rack — grab it (E)!', 3);
+    }
+  }
+
+  private updateInteractPrompts() {
+    const pos = this.camera.position;
+    for (const it of this.interactables) {
+      if (!it.prompt) continue;
+      // Trays only when scrapped path active and not collected
+      if (it.type === 'tray') {
+        const show = this.brotherScrapped && !it.opened && it.mesh.visible;
+        it.prompt.visible = show && it.position.distanceTo(pos) < 5;
+        if (it.prompt.visible) it.prompt.lookAt(pos);
+        continue;
+      }
+      if (it.type === 'wrench_pickup') {
+        const show = !it.opened && it.mesh.visible && !this.wrenchUnlocked;
+        it.prompt.visible = show && it.position.distanceTo(pos) < 5;
+        if (it.prompt.visible) it.prompt.lookAt(pos);
+        continue;
+      }
+      if (it.type === 'boat') {
+        const show = !it.opened && (this.tutorial === 'escape' || this.tutorial === 'breach');
+        it.prompt.visible = show && it.position.distanceTo(pos) < 6;
+        if (it.prompt.visible) it.prompt.lookAt(pos);
+        continue;
+      }
+      // lore / photo always when near
+      if (it.type === 'photo' || it.type === 'note' || it.type === 'plaque') {
+        it.prompt.visible = !it.opened && it.position.distanceTo(pos) < 3.5;
+        if (it.prompt.visible) it.prompt.lookAt(pos);
+      }
     }
   }
 
@@ -778,94 +947,149 @@ export class ForgeHeartGame {
 
   private tryInteract() {
     const pos = this.camera.position;
-    // Scrap disabled
+
+    // Priority: world interactables near crosshair/proximity
+    let bestIt: Interactable | null = null;
+    let bestD = 2.8;
+    for (const it of this.interactables) {
+      if (it.opened) continue;
+      if (it.type === 'tray' && (!this.brotherScrapped || !it.mesh.visible)) continue;
+      if (it.type === 'wrench_pickup' && (!it.mesh.visible || this.wrenchUnlocked)) continue;
+      if (it.type === 'boat' && this.tutorial !== 'escape' && this.tutorial !== 'breach') continue;
+      const d = it.position.distanceTo(pos);
+      if (d < bestD && d <= it.radius + 0.4) {
+        bestIt = it;
+        bestD = d;
+      }
+    }
+    if (bestIt) {
+      this.useInteractable(bestIt);
+      return;
+    }
+
+    // Scrap disabled robots (including accidental brother scrap)
     for (const r of this.robots) {
       if (r.phase !== 'disabled') continue;
       if (r.position.distanceTo(pos) < 2.4) {
-        const bonus = r.scramble >= 100 ? 1.0 : 0.55;
-        const b = Math.round(8 * bonus + Math.random() * 6);
-        const g = Math.round(3 * bonus + Math.random() * 3);
-        this.brass += b;
-        this.gears += g;
-        r.setPhase('husk');
-        const husk = createHusk(this.level.mats, r.position.clone());
-        this.scene.add(husk);
-        this.husks.push(husk);
-        this.scene.remove(r.mesh);
-        this.flash(`Scrapped — +${b} brass, +${g} gears`);
-        return;
-      }
-    }
-
-    for (const it of this.interactables) {
-      if (it.position.distanceTo(pos) > it.radius + 0.5) continue;
-      if (it.type === 'plaque') {
-        this.plaque(`${it.title}: ${it.text}`);
-        return;
-      }
-      if (it.type === 'valve' && !it.opened) {
-        const allyNear = this.robots.some(
-          (r) => r.phase === 'ally' && r.position.distanceTo(it.position) < 3.5,
-        );
-        if (!allyNear) {
-          this.toast('Needs an ally frame to turn the seal.');
-          return;
-        }
-        it.opened = true;
-        const ud = it.mesh.userData as { doorMesh?: THREE.Mesh; doorCol?: Collider };
-        if (ud.doorMesh) {
-          ud.doorMesh.visible = false;
-          ud.doorMesh.position.y = -50;
-        }
-        if (ud.doorCol) {
-          this.colliders = this.colliders.filter((c) => c !== ud.doorCol);
-        }
-        this.flash('Seal opened — passageway revealed!');
-        // loot behind
-        this.spawnPickup(new THREE.Vector3(11, 0.5, 18), 'oil');
-        return;
-      }
-      if (it.type === 'crate' && !it.opened) {
-        const allyNear = this.robots.some(
-          (r) => r.phase === 'ally' && r.position.distanceTo(it.position) < 3,
-        );
-        if (!allyNear) {
-          this.toast('An ally can pry this crate.');
-          return;
-        }
-        it.opened = true;
-        it.mesh.position.y = -10;
-        this.health = Math.min(100, this.health + 35);
-        this.plasma = Math.min(100, this.plasma + 25);
-        this.brass += 5;
-        this.flash('Crate opened — oil, plasma, brass!');
+        this.scrapRobot(r);
         return;
       }
     }
   }
 
-  private spawnPickup(pos: THREE.Vector3, kind: 'oil' | 'cell') {
-    const mat =
-      kind === 'oil'
-        ? new THREE.MeshStandardMaterial({ color: 0x6a5a20 })
-        : new THREE.MeshStandardMaterial({
-            color: 0x33ff99,
-            emissive: 0x00ff66,
-            emissiveIntensity: 0.5,
-          });
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.25, 10, 10), mat);
-    m.position.copy(pos);
-    this.scene.add(m);
-    // simple auto pickup zone tracked via interactables hack
-    this.interactables.push({
-      type: 'crate',
-      position: pos.clone(),
-      radius: 1.2,
-      mesh: m,
-      opened: false,
-      title: kind,
-      text: 'pickup',
-    });
+  private useInteractable(it: Interactable) {
+    if (it.type === 'photo' || it.type === 'note' || it.type === 'plaque') {
+      this.plaque(`${it.title ?? 'Note'}\n\n${it.text ?? ''}`);
+      return;
+    }
+    if (it.type === 'tray' && !it.opened) {
+      it.opened = true;
+      it.mesh.visible = false;
+      if (it.prompt) it.prompt.visible = false;
+      this.traysCollected++;
+      this.audio.playPickup();
+      this.flash(`Part recovered — ${it.title} (${this.traysCollected}/3)`);
+      this.objective = `Rebuild Elias — trays ${this.traysCollected}/3`;
+      if (this.traysCollected >= 3) this.rebuildBrotherFrame();
+      return;
+    }
+    if (it.type === 'wrench_pickup' && !it.opened) {
+      it.opened = true;
+      it.mesh.visible = false;
+      if (it.prompt) it.prompt.visible = false;
+      this.wrenchUnlocked = true;
+      this.weapon = 'wrench';
+      this.audio.playPickup();
+      this.flash('ARC WRENCH — 2 to equip · spend plasma on swings');
+      this.setHelp('2 Wrench · 1 Hand · arcs cost plasma · settle back to EQ');
+      return;
+    }
+    if (it.type === 'boat' && !it.opened) {
+      if (this.tutorial !== 'escape' && this.tutorial !== 'breach') {
+        this.toast('Not yet — the lab door still holds.');
+        return;
+      }
+      // Allow early boat if demons still up but player flees
+      it.opened = true;
+      this.winTutorial();
+      return;
+    }
+  }
+
+  private scrapRobot(r: RobotUnit) {
+    const wasBrother = r.isBrother;
+    const bonus = r.scramble >= 100 ? 1.0 : 0.55;
+    const b = Math.round(6 * bonus + Math.random() * 4);
+    const g = Math.round(2 * bonus + Math.random() * 2);
+    this.brass += b;
+    this.gears += g;
+    r.setPhase('husk');
+    const husk = createHusk(this.level.mats, r.position.clone());
+    this.scene.add(husk);
+    this.husks.push(husk);
+    this.scene.remove(r.mesh);
+
+    if (wasBrother && !this.brotherScrapped && !this.hadAllyOnce) {
+      this.brotherScrapped = true;
+      this.tutorial = 'rebuild';
+      this.objective = 'You dismantled him — gather 3 trays to rebuild';
+      this.setHelp('E on glowing trays around the workstation · then Hand to wake him');
+      this.flash('The talisman frame is scrap —');
+      this.toast(
+        'No. The trays on the worktables still hold his parts. Gather all three (E), then rebuild.',
+        7,
+      );
+      for (const it of this.interactables) {
+        if (it.type === 'tray') {
+          it.mesh.visible = true;
+          it.opened = false;
+          if (it.prompt) it.prompt.visible = true;
+        }
+      }
+      this.audio.playBang(0.3);
+    } else {
+      this.flash(`Scrapped — +${b} brass, +${g} gears`);
+    }
+  }
+
+  private rebuildBrotherFrame() {
+    const spot = this.level.anchors.brotherSpot.clone();
+    const brother = new RobotUnit(this.level.mats, spot);
+    brother.isBrother = true;
+    brother.displayName = 'Elias';
+    brother.setPhase('disabled');
+    brother.scramble = 100;
+    brother.scrambled = true;
+    this.robots.push(brother);
+    this.scene.add(brother.mesh);
+    this.traysCollected = 0;
+    this.brotherScrapped = false;
+    for (const it of this.interactables) {
+      if (it.type === 'tray') {
+        it.mesh.visible = false;
+        if (it.prompt) it.prompt.visible = false;
+      }
+    }
+    this.objective = 'Frame rebuilt — Hand (1) to call Elias home';
+    this.flash('A new shell stands — the talisman gear is reseated');
+    this.toast('Stand close. Hand weapon. Click to reprogram. Speak his name in the plasma.', 6);
+    this.audio.playPickup();
+  }
+
+  private winTutorial() {
+    if (this.won) return;
+    this.won = true;
+    this.tutorial = 'won';
+    this.objective = 'Tutorial complete';
+    this.audio.setTension(0);
+    this.audio.playWin();
+    this.flash('SKIFF AWAY — Elias is with you');
+    this.toast(
+      'You cast off into the floating city. Demons hunt soul-frames. Your brother’s eyes stay green. The work is only beginning.',
+      10,
+    );
+    this.setHelp('Tutorial complete — refresh to play again');
+    this.controls.unlock();
   }
 
   private updateRobots(dt: number) {
@@ -1305,12 +1529,15 @@ export class ForgeHeartGame {
   }
 
   private checkExit() {
+    // Boat controls (E) are the intentional win; proximity only hints
     if (this.won) return;
+    if (this.tutorial !== 'escape' && this.tutorial !== 'breach') return;
     const p = this.camera.position;
-    if (Math.hypot(p.x - this.exit.x, p.z - this.exit.z) < 1.6 && p.y < 3) {
-      this.won = true;
-      this.flash('FOUNDRY ANNEX CLEAR — ForgeHeart slice complete');
-      this.controls.unlock();
+    if (Math.hypot(p.x - this.exit.x, p.z - this.exit.z) < 3.5 && p.y < 4) {
+      // Soft reminder once near boat
+      if (this.msgT <= 0) {
+        this.toast('Boat controls — press E to cast off.', 2);
+      }
     }
   }
 
