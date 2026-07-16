@@ -1,10 +1,11 @@
 /**
- * Brasswork / Steampunk vertical slice entry
+ * ForgeHeart: Gift of the Brass Gods
+ * Separate product from Trump Doom (main branch).
  * Branch: feature/steampunk-vertical-slice
  */
 
 import './styles.css';
-import { SteampunkGame } from './steampunk/game';
+import { ForgeHeartGame } from './forgeheart/game';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const titleScreen = document.getElementById('title-screen')!;
@@ -13,22 +14,16 @@ const btnNew = document.getElementById('btn-new-game') as HTMLButtonElement;
 const btnContinue = document.getElementById('btn-continue') as HTMLButtonElement;
 const saveInfo = document.getElementById('save-info')!;
 
-const ctx = canvas.getContext('2d')!;
-let game: SteampunkGame | null = null;
-let last = 0;
+let game: ForgeHeartGame | null = null;
 let running = false;
 let mouseWired = false;
 
-// Vertical slice: no continue yet
 btnContinue.classList.add('hidden');
 saveInfo.classList.add('hidden');
 
-function loop(ts: number) {
+function loop() {
   if (!running || !game) return;
-  const dt = Math.min(0.05, (ts - last) / 1000 || 0.016);
-  last = ts;
-  game.update(dt);
-  game.render();
+  game.update();
   requestAnimationFrame(loop);
 }
 
@@ -37,22 +32,20 @@ function wireMouse() {
   mouseWired = true;
   canvas.addEventListener('mousedown', (e) => {
     if (e.button === 0) game?.setFireHeld(true);
-    if (e.button === 2) game?.setAltHeld(true);
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) game?.setFireHeld(false);
-    if (e.button === 2) game?.setAltHeld(false);
   });
 }
 
 async function startGame() {
   titleScreen.classList.add('hidden');
   hud.classList.remove('hidden');
-  game = new SteampunkGame(canvas, ctx);
+  // Important: do not getContext('2d') — WebGL needs a clean canvas
+  game = new ForgeHeartGame(canvas);
   wireMouse();
   await game.start();
   running = true;
-  last = performance.now();
   requestAnimationFrame(loop);
 }
 
@@ -62,7 +55,7 @@ btnNew.addEventListener('click', () => {
 btnNew.textContent = 'ENTER THE FOUNDRY';
 
 console.info(
-  '%cBRASSWORK',
+  '%cForgeHeart',
   'color:#c4a35a;font-size:16px;font-weight:bold',
-  '— Steampunk vertical slice (jump · reprogram · arc wrench)',
+  '— Gift of the Brass Gods · Three.js vertical slice',
 );

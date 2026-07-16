@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Brasswork — Foundry Annex</title>
+    <title>ForgeHeart: Gift of the Brass Gods</title>
     <meta
       name="description"
-      content="Steampunk raycaster FPS. Jump, reprogram robots, arc wrench. Vertical slice."
+      content="Heartfelt steampunk adventure. Jump two-story foundries, reprogram automata, arc wrench. Separate from Trump Doom."
     />
   </head>
   <body>
@@ -16,15 +16,15 @@
       <div id="hud" class="hud hidden">
         <div class="hud-top">
           <div id="location-line" class="location-line">Foundry Annex</div>
-          <div id="stats-line" class="stats-line">ALLIES 0 · DISABLED 0</div>
+          <div id="stats-line" class="stats-line">BRASS 0 · GEARS 0 · ALLIES 0</div>
           <div id="dash-meter" class="dash-meter">
-            <span class="dash-label">JUMP</span>
+            <span class="dash-label">JUMP ½ WALL</span>
             <div class="dash-track"><div id="dash-fill" class="dash-fill" style="width:100%"></div></div>
           </div>
         </div>
         <div class="hud-bar resolve-panel">
           <div class="resolve-header">
-            <span class="face" id="resolve-face" title="Integrity">🔧</span>
+            <span class="face" id="resolve-face" title="Integrity">⚙️</span>
             <span class="label">INTEGRITY</span>
             <span class="resolve-pct" id="resolve-pct">100</span>
           </div>
@@ -40,7 +40,7 @@
         </div>
         <div id="plaque-toast" class="plaque-toast hidden"></div>
         <div id="convert-toast" class="convert-toast hidden"></div>
-        <div class="help-line">WASD · Space/J jump · 1 Hand · 2 Wrench · LMB use · E scrap/plaque · Esc pause</div>
+        <div class="help-line">WASD · Space jump · 1 Hand · 2 Wrench · LMB · E scrap/valve/crate · Esc</div>
       </div>
       <div id="shop-panel" class="shop-panel hidden"></div>
       <div id="pause-menu" class="pause-menu hidden">
@@ -76,13 +76,13 @@
       </div>
       <div id="title-screen" class="title-screen">
         <div class="title-card">
-          <p class="eyebrow">STEAMPUNK RAYCASTER · VERTICAL SLICE · BRANCH BUILD</p>
-          <h1>BRASSWORK</h1>
-          <p class="subtitle">Foundry Annex</p>
+          <p class="eyebrow">HEARTFELT STEAMPUNK · TRUE 3D · SEPARATE FROM TRUMP DOOM</p>
+          <h1>FORGEHEART</h1>
+          <p class="subtitle">Gift of the Brass Gods</p>
           <p class="blurb">
-            You are an engineer of plasma and automata.<br />
-            <strong>Arc wrench</strong> disables rogue frames. <strong>Reprogram hand</strong> turns them ally.<br />
-            Jump half a wall. Walk the open yard. Read the brass plaques.
+            Climb two-story workshops. Jump half a wall. Under open sky and iron beams.<br />
+            <strong>Arc wrench</strong> scrambles rogue frames. <strong>Hand</strong> rewrites them as allies.<br />
+            Allies draw fire, repair kin, and open sealed valves. Scrap yields brass and gears.
           </p>
           <div class="title-actions">
             <button id="btn-continue" type="button" class="hidden">CONTINUE</button>
@@ -90,7 +90,7 @@
           </div>
           <p id="save-info" class="save-info hidden"></p>
           <p class="disclaimer">
-            Vertical slice on branch feature/steampunk-vertical-slice · Jump · Platforms · Reprogram
+            Branch feature/steampunk-vertical-slice · Three.js · Trump Doom stays on main
           </p>
         </div>
       </div>
