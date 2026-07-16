@@ -23,7 +23,18 @@ export const ROBOT = {
   /** Scramble per arc hit (~4 hits to full) */
   scramblePerHit: 28,
   chaseSpeed: 1.55,
-  allySpeed: 2.2,
+  allySpeed: 2.05,
+  /** Preferred distance from player while escorting */
+  allyOrbitMin: 1.6,
+  allyOrbitMax: 3.4,
+  allyIdleChance: 0.35,
+  allyIdleMin: 1.2,
+  allyIdleMax: 3.5,
+  /** Soft separation radius (don't clump) */
+  separateRadius: 1.35,
+  separateStrength: 2.8,
+  enemySeparateRadius: 1.5,
+  enemySeparateStrength: 2.2,
   meleeRange: 1.55,
   meleeDamage: 10,
   meleeCd: 1.15,
@@ -36,10 +47,11 @@ export const ROBOT = {
   blastDamage: 42,
   boltCd: 4.2,
   boltWindup: 0.85,
-  boltSpeed: 4.2,
-  boltTurnRate: 1.1, // rad/sec max steer
+  boltSpeed: 3.35,
+  /** Very gentle tracking — mostly straight, slight curve */
+  boltTurnRate: 0.45,
   boltDamage: 16,
-  boltLife: 5,
+  boltLife: 5.5,
 } as const;
 
 export class RobotUnit {
@@ -59,6 +71,10 @@ export class RobotUnit {
   fuseT = 0;
   windupT = 0;
   flashPhase = 0;
+  /** Ally escort: orbit angle around player, idle timer */
+  orbitAngle = Math.random() * Math.PI * 2;
+  idleT = 0;
+  nextIdleRoll = 1 + Math.random() * 2;
 
   private body: THREE.Group;
   private legL: THREE.Mesh;

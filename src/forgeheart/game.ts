@@ -652,14 +652,23 @@ export class ForgeHeartGame {
         continue;
       }
 
-      // Chase (slow)
+      // Chase (slow) + separation so hostiles don't stack
       let moving = false;
       if (dist < 18 && dist > ROBOT.fuseTriggerRange + 0.15) {
         const dir = playerFeet.clone().sub(r.position);
         dir.y = 0;
         if (dir.lengthSq() > 0.01) {
           dir.normalize();
+          const sep = this.separation(r, ROBOT.enemySeparateRadius, ROBOT.enemySeparateStrength, 'hostile');
+          dir.add(sep).normalize();
           r.position.addScaledVector(dir, ROBOT.chaseSpeed * dt);
+          moving = true;
+        }
+      } else {
+        // Still un-clump while near player / fuse edge
+        const sep = this.separation(r, ROBOT.enemySeparateRadius, ROBOT.enemySeparateStrength, 'hostile');
+        if (sep.lengthSq() > 0.01) {
+          r.position.addScaledVector(sep.normalize(), ROBOT.chaseSpeed * 0.6 * dt);
           moving = true;
         }
       }
@@ -681,18 +690,66 @@ export class ForgeHeartGame {
     }
   }
 
+  /**
+   * Soft push away from other robots so units don't stack.
+   * kind: who to avoid (allies only / hostiles only / both active bodies)
+   */
+  private separation(
+    self: RobotUnit,
+    radius: number,
+    strength: number,
+    kind: 'ally' | 'hostile' | 'all',
+  ): THREE.Vector3 {
+    const push = new THREE.Vector3();
+    for (const o of this.robots) {
+      if (o === self || o.phase === 'husk' || o.phase === 'disabled') continue;
+      if (kind === 'ally' && o.phase !== 'ally') continue;
+      if (kind === 'hostile' && o.phase !== 'active') continue;
+      const d = self.position.distanceTo(o.position);
+      if (d < 0.01 || d > radius) continue;
+      const away = self.position.clone().sub(o.position);
+      away.y = 0;
+      const falloff = 1 - d / radius;
+      away.normalize().multiplyScalar(strength * falloff * falloff);
+      push.add(away);
+    }
+    return push;
+  }
+
   private updateAlly(r: RobotUnit, dt: number, playerFeet: THREE.Vector3) {
     r.mode = 'ally';
     const dist = r.position.distanceTo(playerFeet);
     let moving = false;
-    if (dist > 2.2 && dist < 22) {
-      const dir = playerFeet.clone().sub(r.position);
-      dir.y = 0;
-      dir.normalize();
-      r.position.addScaledVector(dir, ROBOT.allySpeed * dt);
-      moving = true;
+
+    // Idle moments — stand still briefly near the engineer
+    if (r.idleT > 0) {
+      r.idleT -= dt;
+      // still separate a little so they don't freeze inside each other
+      const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
+      if (sep.lengthSq() > 0.05) {
+        r.position.addScaledVector(sep.normalize(), ROBOT.allySpeed * 0.45 * dt);
+        moving = true;
+      }
+      // If player walks away, break idle
+      if (dist > ROBOT.allyOrbitMax + 1.2) r.idleT = 0;
+      else {
+        r.mesh.lookAt(playerFeet.x, r.position.y, playerFeet.z);
+        r.tickAnim(dt, moving, 'ally');
+        this.allyCombatAndRepair(r, dt, playerFeet);
+        return;
+      }
     }
 
+    // Roll for next idle when close and not fighting
+    r.nextIdleRoll -= dt;
+    if (r.nextIdleRoll <= 0) {
+      r.nextIdleRoll = 2.5 + Math.random() * 3.5;
+      if (dist < ROBOT.allyOrbitMax + 0.4 && Math.random() < ROBOT.allyIdleChance) {
+        r.idleT = ROBOT.allyIdleMin + Math.random() * (ROBOT.allyIdleMax - ROBOT.allyIdleMin);
+      }
+    }
+
+    // Engage nearby hostiles first (but keep separation)
     let foe: RobotUnit | null = null;
     let fd = 6;
     for (const o of this.robots) {
@@ -703,13 +760,75 @@ export class ForgeHeartGame {
         foe = o;
       }
     }
-    if (foe && fd < 8 && fd > 1.4) {
-      const dir = foe.position.clone().sub(r.position);
-      dir.y = 0;
-      dir.normalize();
-      r.position.addScaledVector(dir, ROBOT.allySpeed * 0.95 * dt);
-      moving = true;
+
+    const move = new THREE.Vector3();
+
+    if (foe && fd < 7.5) {
+      if (fd > 1.5) {
+        const toward = foe.position.clone().sub(r.position);
+        toward.y = 0;
+        toward.normalize();
+        move.addScaledVector(toward, 1);
+      }
       r.mesh.lookAt(foe.position.x, r.position.y, foe.position.z);
+    } else {
+      // Escort: hold a slot on a ring around the player, slowly orbit
+      r.orbitAngle += dt * 0.55;
+      const ringR = (ROBOT.allyOrbitMin + ROBOT.allyOrbitMax) * 0.5;
+      // Spread slots by robot index so allies claim different angles
+      const allies = this.robots.filter((x) => x.phase === 'ally');
+      const idx = Math.max(0, allies.indexOf(r));
+      const slot = r.orbitAngle + (idx * Math.PI * 2) / Math.max(1, allies.length);
+      const target = new THREE.Vector3(
+        playerFeet.x + Math.cos(slot) * ringR,
+        r.position.y,
+        playerFeet.z + Math.sin(slot) * ringR,
+      );
+
+      // If too far, sprint back to player first
+      if (dist > ROBOT.allyOrbitMax + 1.5) {
+        const toward = playerFeet.clone().sub(r.position);
+        toward.y = 0;
+        toward.normalize();
+        move.addScaledVector(toward, 1.35);
+      } else {
+        const toward = target.clone().sub(r.position);
+        toward.y = 0;
+        const td = toward.length();
+        if (td > 0.35) {
+          toward.normalize();
+          move.addScaledVector(toward, 0.9);
+        }
+      }
+      r.mesh.lookAt(playerFeet.x, r.position.y, playerFeet.z);
+    }
+
+    // Separation always
+    const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
+    // Also soft-avoid hostiles so they don't sit inside enemies
+    sep.add(this.separation(r, ROBOT.enemySeparateRadius * 0.9, 1.4, 'hostile'));
+    move.add(sep);
+
+    if (move.lengthSq() > 0.02) {
+      move.normalize();
+      r.position.addScaledVector(move, ROBOT.allySpeed * dt);
+      moving = true;
+    }
+
+    this.allyCombatAndRepair(r, dt, playerFeet);
+    r.tickAnim(dt, moving, 'ally');
+  }
+
+  private allyCombatAndRepair(r: RobotUnit, dt: number, playerFeet: THREE.Vector3) {
+    let foe: RobotUnit | null = null;
+    let fd = 6;
+    for (const o of this.robots) {
+      if (o.phase !== 'active') continue;
+      const d = o.position.distanceTo(r.position);
+      if (d < fd) {
+        fd = d;
+        foe = o;
+      }
     }
     if (foe && fd < 1.55 && r.attackCd <= 0) {
       r.attackCd = 0.9;
@@ -732,7 +851,7 @@ export class ForgeHeartGame {
         r.repairCd = 1.1;
       }
     }
-    r.tickAnim(dt, moving, 'ally');
+    void dt;
   }
 
   private fireBolt(r: RobotUnit, target: THREE.Vector3) {
