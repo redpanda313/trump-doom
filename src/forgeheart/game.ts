@@ -63,6 +63,9 @@ export class ForgeHeartGame {
   private msgT = 0;
 
   private fireHeld = false;
+  /** Last stable standing position — used if we fall through the world */
+  private safePos = new THREE.Vector3();
+  private safeTimer = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -124,12 +127,13 @@ export class ForgeHeartGame {
       this.scene.add(r.mesh);
     }
 
-    // Player start
+    // Player start (feet on spawn collider top)
     this.camera.position.set(
       this.level.spawn.x,
-      this.level.spawn.y + PLAYER_H * 0.9,
+      this.level.spawn.y + PLAYER_H * 0.9 + 0.2,
       this.level.spawn.z,
     );
+    this.safePos.copy(this.camera.position);
 
     // HUD
     this.hpFill = document.getElementById('resolve-fill')!;
@@ -258,64 +262,145 @@ export class ForgeHeartGame {
     }
   }
 
+  /**
+   * Robust character collision:
+   * - Cap fall speed
+   * - Fixed substeps (prevents tunneling)
+   * - Sweep per axis with full body AABB
+   * - Ground snap to highest surface under feet
+   * - Void rescue to last safe position
+   */
   private moveWithCollision(dt: number) {
-    const pos = this.camera.position;
-    const feetY = pos.y - PLAYER_H * 0.9;
+    // Terminal velocity — limits how far we can tunnel in one frame
+    this.velocity.y = Math.max(this.velocity.y, -22);
 
-    // Axis separated sweep
-    const tryAxis = (axis: 'x' | 'y' | 'z') => {
+    const maxStep = 1 / 120;
+    const steps = Math.max(1, Math.min(10, Math.ceil(dt / maxStep)));
+    const sdt = dt / steps;
+
+    for (let s = 0; s < steps; s++) {
+      this.physicsSubstep(sdt);
+    }
+
+    this.snapToGround(0.45);
+
+    // Remember safe standing spots
+    if (this.onGround) {
+      this.safeTimer += dt;
+      if (this.safeTimer > 0.15) {
+        this.safePos.copy(this.camera.position);
+      }
+    } else {
+      this.safeTimer = 0;
+    }
+
+    // Fell through the world
+    if (this.camera.position.y < -2) {
+      this.camera.position.copy(this.safePos);
+      this.velocity.set(0, 0, 0);
+      this.onGround = true;
+      this.toast('Brass gods catch you — restored to solid ground.');
+    }
+  }
+
+  private playerAabb(pos: THREE.Vector3): { min: THREE.Vector3; max: THREE.Vector3 } {
+    const feet = pos.y - PLAYER_H * 0.9;
+    const head = pos.y + 0.15;
+    return {
+      min: new THREE.Vector3(pos.x - PLAYER_R, feet, pos.z - PLAYER_R),
+      max: new THREE.Vector3(pos.x + PLAYER_R, head, pos.z + PLAYER_R),
+    };
+  }
+
+  private physicsSubstep(dt: number) {
+    const pos = this.camera.position;
+
+    const resolveAxis = (axis: 'x' | 'y' | 'z') => {
       const delta = this.velocity[axis] * dt;
-      if (delta === 0) return;
+      if (Math.abs(delta) < 1e-8) return;
       pos[axis] += delta;
-      const min = new THREE.Vector3(
-        pos.x - PLAYER_R,
-        pos.y - PLAYER_H * 0.9,
-        pos.z - PLAYER_R,
-      );
-      const max = new THREE.Vector3(pos.x + PLAYER_R, pos.y + 0.2, pos.z + PLAYER_R);
+
+      let { min, max } = this.playerAabb(pos);
+      // Slight skin so we don't jitter inside surfaces
       for (const c of this.colliders) {
         if (!aabbOverlap(min, max, c.min, c.max)) continue;
+
         if (axis === 'y') {
-          if (this.velocity.y < 0) {
-            pos.y = c.max.y + PLAYER_H * 0.9 + 0.001;
+          if (delta < 0) {
+            // Landing on top
+            pos.y = c.max.y + PLAYER_H * 0.9 + 0.002;
             this.velocity.y = 0;
             this.onGround = true;
-          } else if (this.velocity.y > 0) {
-            pos.y = c.min.y - 0.25;
-            this.velocity.y = 0;
+          } else {
+            // Hit ceiling / underside
+            pos.y = c.min.y - 0.16;
+            this.velocity.y = Math.min(0, this.velocity.y);
           }
+          min = this.playerAabb(pos).min;
+          max = this.playerAabb(pos).max;
         } else if (axis === 'x') {
-          if (this.velocity.x > 0) pos.x = c.min.x - PLAYER_R - 0.001;
-          else pos.x = c.max.x + PLAYER_R + 0.001;
+          // Prefer sliding: only push if not mostly standing on this box
+          const feet = pos.y - PLAYER_H * 0.9;
+          const onTop = feet >= c.max.y - 0.08 && feet <= c.max.y + 0.35;
+          if (onTop && this.velocity.y <= 0) continue;
+          if (delta > 0) pos.x = c.min.x - PLAYER_R - 0.002;
+          else pos.x = c.max.x + PLAYER_R + 0.002;
           this.velocity.x = 0;
+          min = this.playerAabb(pos).min;
+          max = this.playerAabb(pos).max;
         } else {
-          if (this.velocity.z > 0) pos.z = c.min.z - PLAYER_R - 0.001;
-          else pos.z = c.max.z + PLAYER_R + 0.001;
+          const feet = pos.y - PLAYER_H * 0.9;
+          const onTop = feet >= c.max.y - 0.08 && feet <= c.max.y + 0.35;
+          if (onTop && this.velocity.y <= 0) continue;
+          if (delta > 0) pos.z = c.min.z - PLAYER_R - 0.002;
+          else pos.z = c.max.z + PLAYER_R + 0.002;
           this.velocity.z = 0;
+          min = this.playerAabb(pos).min;
+          max = this.playerAabb(pos).max;
         }
       }
     };
 
-    this.onGround = false;
-    tryAxis('x');
-    tryAxis('z');
-    tryAxis('y');
+    // Only clear grounded when actually falling / jumping
+    if (this.velocity.y > 0.5) this.onGround = false;
+    if (this.velocity.y < -0.5) this.onGround = false;
 
-    // Ground snap check
-    if (!this.onGround && this.velocity.y <= 0) {
-      const probe = new THREE.Vector3(pos.x - PLAYER_R, pos.y - PLAYER_H * 0.9 - 0.08, pos.z - PLAYER_R);
-      const probeMax = new THREE.Vector3(pos.x + PLAYER_R, pos.y - PLAYER_H * 0.9 + 0.05, pos.z + PLAYER_R);
-      for (const c of this.colliders) {
-        if (aabbOverlap(probe, probeMax, c.min, c.max) && Math.abs(c.max.y - (pos.y - PLAYER_H * 0.9)) < 0.2) {
-          this.onGround = true;
-          pos.y = c.max.y + PLAYER_H * 0.9;
-          this.velocity.y = 0;
-          break;
+    resolveAxis('x');
+    resolveAxis('z');
+    resolveAxis('y');
+  }
+
+  /**
+   * Place feet on the highest solid surface directly under the player
+   * within snapDist. Critical for stairs, platform edges, thin floors.
+   */
+  private snapToGround(snapDist: number) {
+    const pos = this.camera.position;
+    const feetY = pos.y - PLAYER_H * 0.9;
+    // Horizontal footprint (slightly smaller than body to reduce edge catches)
+    const r = PLAYER_R * 0.75;
+    let bestTop = -Infinity;
+    let found = false;
+
+    for (const c of this.colliders) {
+      // Must overlap footprint in XZ
+      if (pos.x + r < c.min.x || pos.x - r > c.max.x) continue;
+      if (pos.z + r < c.min.z || pos.z - r > c.max.z) continue;
+      const top = c.max.y;
+      // Surface at or below feet, within snap range
+      if (top <= feetY + 0.12 && top >= feetY - snapDist) {
+        if (top > bestTop) {
+          bestTop = top;
+          found = true;
         }
       }
     }
 
-    void feetY;
+    if (found && this.velocity.y <= 0.5) {
+      pos.y = bestTop + PLAYER_H * 0.9 + 0.002;
+      if (this.velocity.y < 0) this.velocity.y = 0;
+      this.onGround = true;
+    }
   }
 
   private tryFire() {

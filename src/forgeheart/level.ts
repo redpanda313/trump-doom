@@ -54,6 +54,10 @@ function box(
   return { mesh, col };
 }
 
+/**
+ * Visual slab is thin; collision slab is thicker so the player can't tunnel
+ * through floors during large physics steps.
+ */
 function floorPlane(
   _mats: Mats,
   kind: 'wood' | 'grate' | 'cobble' | 'brass' | 'oil',
@@ -71,16 +75,29 @@ function floorPlane(
     roughness: kind === 'grate' ? 0.6 : 0.85,
     metalness: kind === 'brass' || kind === 'grate' ? 0.5 : 0.05,
   });
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), mat);
+  const visualH = 0.28;
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, visualH, d), mat);
+  // Top surface at y + visualH/2 ≈ walkable height
+  const topY = y + visualH / 2;
   mesh.position.set(x, y, z);
   mesh.rotation.y = yRot;
   mesh.receiveShadow = true;
   mesh.castShadow = true;
+  // Collision: thick volume below the top surface (harder to fall through)
+  const colH = 0.85;
   const col: Collider = {
-    min: new THREE.Vector3(x - w / 2, y - 0.125, z - d / 2),
-    max: new THREE.Vector3(x + w / 2, y + 0.125, z + d / 2),
+    min: new THREE.Vector3(x - w / 2, topY - colH, z - d / 2),
+    max: new THREE.Vector3(x + w / 2, topY, z + d / 2),
   };
   return { mesh, col };
+}
+
+/** Inflate collider slightly for stable contact. */
+export function inflateCollider(c: Collider, skin = 0.02): Collider {
+  return {
+    min: new THREE.Vector3(c.min.x - skin, c.min.y - skin * 0.25, c.min.z - skin),
+    max: new THREE.Vector3(c.max.x + skin, c.max.y + skin * 0.15, c.max.z + skin),
+  };
 }
 
 /** Build Foundry Annex: ground workshop + upper walkway + open courtyard. */
@@ -92,7 +109,7 @@ export function buildFoundryAnnex(): LevelBuilt {
 
   const add = (m: THREE.Object3D, col?: Collider) => {
     group.add(m);
-    if (col) colliders.push(col);
+    if (col) colliders.push(inflateCollider(col, 0.03));
   };
 
   // ——— Ground floor hall (interior) ———
@@ -191,15 +208,16 @@ export function buildFoundryAnnex(): LevelBuilt {
     add(pillar.mesh, pillar.col);
   }
 
-  // Stairs from courtyard to upper (solid steps)
+  // Stairs from courtyard to upper (thick solid steps — hard to fall through)
   for (let i = 0; i < 8; i++) {
     const t = i / 7;
     const sy = 0.15 + t * (upperY - 0.15);
     const sz = 6.5 + i * 0.55;
-    const step = floorPlane(mats, 'grate', 2.2, 0.55, -3.5, sy, sz);
+    const step = box(mats, mats.iron, 2.2, Math.max(0.35, sy), 0.6, -3.5, sy / 2, sz);
     add(step.mesh, step.col);
-    // step side
-    wall(0.15, sy + 0.2, 0.55, -4.55, sy / 2, sz, mats.iron);
+    const top = floorPlane(mats, 'grate', 2.2, 0.6, -3.5, sy, sz);
+    add(top.mesh); // visual only — collision from thick body
+    wall(0.15, Math.max(0.4, sy), 0.6, -4.55, sy / 2, sz, mats.iron);
   }
 
   // Half-height platform in courtyard (jump puzzle)
@@ -230,12 +248,12 @@ export function buildFoundryAnnex(): LevelBuilt {
     const c = box(mats, mats.woodDark, 11.5, 0.25, 7.5, 0, upperY + WALL_H * 0.85, -1);
     add(c.mesh, c.col);
   }
-  // Stairs inside workshop to loft
+  // Stairs inside workshop to loft (solid risers)
   for (let i = 0; i < 10; i++) {
     const t = i / 9;
     const sy = 0.2 + t * (upperY - 0.2);
     const sx = 7 - i * 0.35;
-    const step = box(mats, mats.wood, 1.4, 0.22, 1.2, sx, sy, 3.5);
+    const step = box(mats, mats.wood, 1.5, Math.max(0.35, sy), 1.3, sx, sy / 2, 3.5);
     add(step.mesh, step.col);
   }
 
