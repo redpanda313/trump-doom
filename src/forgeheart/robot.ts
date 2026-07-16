@@ -39,14 +39,16 @@ export const ROBOT = {
   /** Max simultaneous powered allies */
   maxAllies: 3,
   /**
-   * Plasma drain per *current live* ally per second.
-   * Always re-counted each tick — never cached from peak ally count.
+   * Plasma economy (single formula, live ally count every tick):
+   *   netPerSec = plasmaRegen - allyUpkeep * allyCount
+   *
+   *   0 allies → +4.0/s
+   *   1 ally   → +1.2/s
+   *   2 allies → −1.6/s
+   *   3 allies → −4.4/s
    */
-  allyPowerDrain: 2.2,
-  /** Base plasma regen when no allies */
-  plasmaRegenBase: 7.5,
-  /** Regen penalty per powered ally (1 ally = mild surplus, 3 = net drain) */
-  plasmaRegenPerAlly: 1.15,
+  plasmaRegen: 4.0,
+  allyUpkeep: 2.8,
   /** Seconds at 0 plasma before an ally risks going rogue */
   allyStarveTime: 2.8,
   /** Vertical motion — step short risers, jump half-walls / stairs */

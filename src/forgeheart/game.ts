@@ -250,17 +250,10 @@ export class ForgeHeartGame {
     const allies = this.countPoweredAllies();
     const dis = this.robots.filter((r) => r.phase === 'disabled' && r.mesh.visible).length;
     const cap = ROBOT.maxAllies;
-    const net =
-      ROBOT.plasmaRegenBase -
-      allies * ROBOT.plasmaRegenPerAlly -
-      allies * ROBOT.allyPowerDrain;
-    const powerWarn =
-      allies > 0 && this.plasma < 15
-        ? ' · ⚠ POWER'
-        : allies > 0
-          ? ` · PWR ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`
-          : '';
-    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · DOWN ${dis}${powerWarn}${this.onGround ? '' : ' · AIR'}`;
+    const net = this.plasmaNetPerSec(allies);
+    const netLabel = `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`;
+    const powerWarn = allies > 0 && this.plasma < 15 ? ' · ⚠ LOW' : '';
+    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · ${netLabel}${powerWarn} · DOWN ${dis}${this.onGround ? '' : ' · AIR'}`;
     if (this.locEl) this.locEl.textContent = 'Foundry Annex · ForgeHeart';
 
     if (this.msgT > 0) {
@@ -450,11 +443,6 @@ export class ForgeHeartGame {
       }
     } else {
       // Reprogram: scrambled (eyes out) OR disabled
-      this.atkCd = 0.45;
-      if (this.plasma < 22) {
-        this.toast('Plasma low — wait to reprogram.');
-        return;
-      }
       let best: RobotUnit | null = null;
       let bestD = 2.4;
       for (const r of this.robots) {
@@ -465,31 +453,41 @@ export class ForgeHeartGame {
           bestD = d;
         }
       }
-      if (best) {
-        const allyCount = this.countPoweredAllies();
-        if (allyCount >= ROBOT.maxAllies) {
-          this.toast(`Power grid full — only ${ROBOT.maxAllies} allies. Scrap or lose one first.`);
-          return;
-        }
-        if (this.plasma < 22) {
-          this.toast('Plasma low — wait to reprogram.');
-          return;
-        }
-        this.plasma -= 22;
-        best.setPhase('ally');
-        best.returning = false;
-        best.vy = 0;
-        this.flash(`REPROGRAMMED — ${allyCount + 1}/${ROBOT.maxAllies} powered`);
-      } else {
+      if (!best) {
+        this.atkCd = 0.35;
         this.toast('Need scramble-full (dark eyes) or knocked-out frame nearby.');
+        return;
       }
+      const allyCount = this.countPoweredAllies();
+      if (allyCount >= ROBOT.maxAllies) {
+        this.atkCd = 0.35;
+        this.toast(`Power grid full — only ${ROBOT.maxAllies} allies.`);
+        return;
+      }
+      const reprogramCost = 18;
+      if (this.plasma < reprogramCost) {
+        this.atkCd = 0.35;
+        this.toast(`Need ${reprogramCost} plasma to reprogram (have ${Math.floor(this.plasma)}).`);
+        return;
+      }
+      this.atkCd = 0.5;
+      this.plasma -= reprogramCost;
+      best.setPhase('ally');
+      best.returning = false;
+      best.vy = 0;
+      best.onGround = true;
+      const next = allyCount + 1;
+      const net = this.plasmaNetPerSec(next);
+      this.flash(
+        `REPROGRAMMED ${next}/${ROBOT.maxAllies} · plasma ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`,
+      );
     }
   }
 
   /**
    * Live powered allies only — re-scanned every call.
    * Excludes husks, invisible meshes, and units removed from the scene
-   * so drain never sticks at a peak (e.g. 3→1) ally count.
+   * so upkeep never sticks at a peak (e.g. 3→1) ally count.
    */
   private countPoweredAllies(): number {
     let n = 0;
@@ -507,12 +505,17 @@ export class ForgeHeartGame {
     return this.robots.filter((r) => this.isPoweredAlly(r));
   }
 
+  /** Single source of truth for plasma rate (must match tickAllyPower). */
+  private plasmaNetPerSec(allyCount: number): number {
+    return ROBOT.plasmaRegen - ROBOT.allyUpkeep * allyCount;
+  }
+
   /**
-   * Regen + drain from *current* ally count only (never cached).
-   * Net: 0 = strong regen; 1 = mild surplus; 2 ≈ flat; 3 = net drain.
+   * One formula only: plasma += (regen − upkeep×allies) × dt
+   * Ally count is always live — never cached.
    */
   private tickAllyPower(dt: number) {
-    // Rescue / drop ghost allies that fell out of the world (would keep draining)
+    // Rescue allies that fell out of the world
     for (const r of this.robots) {
       if (r.phase !== 'ally') continue;
       if (r.position.y < -2) {
@@ -524,18 +527,15 @@ export class ForgeHeartGame {
 
     const allies = this.getPoweredAllies();
     const n = allies.length;
+    const net = this.plasmaNetPerSec(n);
 
-    const regen = Math.max(0, ROBOT.plasmaRegenBase - n * ROBOT.plasmaRegenPerAlly);
-    this.plasma = Math.min(100, this.plasma + regen * dt);
+    // Single application: no separate regen-then-drain (that felt like random swings)
+    this.plasma = Math.max(0, Math.min(100, this.plasma + net * dt));
 
     if (n === 0) {
       this.allyStarveT = 0;
       return;
     }
-
-    // Drain scales strictly with live n — e.g. 3→1 instantly drops to 1× rate
-    const drain = ROBOT.allyPowerDrain * n * dt;
-    this.plasma = Math.max(0, this.plasma - drain);
 
     if (this.plasma <= 0.05) {
       this.allyStarveT += dt;
@@ -574,7 +574,11 @@ export class ForgeHeartGame {
     r.mode = 'chase';
     r.returning = false;
     r.fuseT = 0;
-    this.flash('LINK SEVERED — a frame turned rogue!');
+    const left = this.countPoweredAllies(); // already not counting this unit
+    const net = this.plasmaNetPerSec(left);
+    this.flash(
+      `LINK SEVERED — rogue! Grid ${left}/${ROBOT.maxAllies} · ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`,
+    );
   }
 
   /**
