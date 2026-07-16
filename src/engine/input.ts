@@ -51,7 +51,9 @@ export class Input {
 
       if (!wasDown) this.onMoveKeyDown(e.code);
 
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) {
+      if (
+        ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'KeyJ'].includes(e.code)
+      ) {
         e.preventDefault();
       }
     });

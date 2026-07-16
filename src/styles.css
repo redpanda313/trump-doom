@@ -1,11 +1,11 @@
 :root {
-  --gold: #ffd700;
-  --navy: #0a1f44;
-  --news-red: #c41e3a;
-  --concrete: #4a4f57;
-  --resolve: #2ecc71;
-  --voice: #00c2ff;
-  --fog: #6b3fa0;
+  --gold: #c4a35a;
+  --navy: #1a120c;
+  --news-red: #a04020;
+  --concrete: #4a4038;
+  --resolve: #3d8b6e;
+  --voice: #5ef0a0;
+  --fog: #5a4030;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 

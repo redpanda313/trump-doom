@@ -1,11 +1,10 @@
 /**
- * Trump Doom — campaign entry
- * Raycaster · Ep 0–1 · Save/Continue · Settings
+ * Brasswork / Steampunk vertical slice entry
+ * Branch: feature/steampunk-vertical-slice
  */
 
 import './styles.css';
-import { Game, type StartMode } from './game/game';
-import { hasSave, loadSave, formatSaveTime } from './game/save';
+import { SteampunkGame } from './steampunk/game';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const titleScreen = document.getElementById('title-screen')!;
@@ -15,23 +14,14 @@ const btnContinue = document.getElementById('btn-continue') as HTMLButtonElement
 const saveInfo = document.getElementById('save-info')!;
 
 const ctx = canvas.getContext('2d')!;
-let game: Game | null = null;
+let game: SteampunkGame | null = null;
 let last = 0;
 let running = false;
 let mouseWired = false;
 
-function refreshTitleSaveUi() {
-  const save = loadSave();
-  if (save && hasSave()) {
-    btnContinue.classList.remove('hidden');
-    saveInfo.classList.remove('hidden');
-    saveInfo.textContent = `Save: ${save.locationLabel} · ${formatSaveTime(save.savedAt)} · Train ${save.player.conversions}`;
-  } else {
-    btnContinue.classList.add('hidden');
-    saveInfo.classList.add('hidden');
-    saveInfo.textContent = '';
-  }
-}
+// Vertical slice: no continue yet
+btnContinue.classList.add('hidden');
+saveInfo.classList.add('hidden');
 
 function loop(ts: number) {
   if (!running || !game) return;
@@ -55,15 +45,10 @@ function wireMouse() {
   });
 }
 
-async function startGame(mode: StartMode) {
-  if (mode === 'new') {
-    const ok = !hasSave() || window.confirm('Start a new game? This will overwrite your save.');
-    if (!ok) return;
-  }
-
+async function startGame() {
   titleScreen.classList.add('hidden');
   hud.classList.remove('hidden');
-  game = new Game(canvas, ctx, mode);
+  game = new SteampunkGame(canvas, ctx);
   wireMouse();
   await game.start();
   running = true;
@@ -72,16 +57,12 @@ async function startGame(mode: StartMode) {
 }
 
 btnNew.addEventListener('click', () => {
-  void startGame('new');
+  void startGame();
 });
-btnContinue.addEventListener('click', () => {
-  void startGame('continue');
-});
-
-refreshTitleSaveUi();
+btnNew.textContent = 'ENTER THE FOUNDRY';
 
 console.info(
-  '%cTRUMP DOOM',
-  'color:#ffd700;font-size:16px;font-weight:bold',
-  '— Ep 0–1 campaign. Save/Continue enabled.',
+  '%cBRASSWORK',
+  'color:#c4a35a;font-size:16px;font-weight:bold',
+  '— Steampunk vertical slice (jump · reprogram · arc wrench)',
 );

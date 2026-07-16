@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Trump Doom — The Road to the Oval</title>
+    <title>Brasswork — Foundry Annex</title>
     <meta
       name="description"
-      content="Doom-inspired browser FPS. Fight satire with debate, framing, and logic. Non-violent rhetoric combat."
+      content="Steampunk raycaster FPS. Jump, reprogram robots, arc wrench. Vertical slice."
     />
   </head>
   <body>
@@ -15,17 +15,17 @@
       <div id="hurt-vignette" class="hurt-vignette hidden" aria-hidden="true"></div>
       <div id="hud" class="hud hidden">
         <div class="hud-top">
-          <div id="location-line" class="location-line">The Basement of Ambition</div>
-          <div id="stats-line" class="stats-line">TRAIN 0 · PLAQUES 0 · BRAND 0</div>
+          <div id="location-line" class="location-line">Foundry Annex</div>
+          <div id="stats-line" class="stats-line">ALLIES 0 · DISABLED 0</div>
           <div id="dash-meter" class="dash-meter">
-            <span class="dash-label">DASH</span>
-            <div class="dash-track"><div id="dash-fill" class="dash-fill"></div></div>
+            <span class="dash-label">JUMP</span>
+            <div class="dash-track"><div id="dash-fill" class="dash-fill" style="width:100%"></div></div>
           </div>
         </div>
         <div class="hud-bar resolve-panel">
           <div class="resolve-header">
-            <span class="face" id="resolve-face" title="Resolve">😎</span>
-            <span class="label">RESOLVE</span>
+            <span class="face" id="resolve-face" title="Integrity">🔧</span>
+            <span class="label">INTEGRITY</span>
             <span class="resolve-pct" id="resolve-pct">100</span>
           </div>
           <div class="meter meter-resolve">
@@ -33,31 +33,20 @@
             <div class="meter-segments" aria-hidden="true"></div>
           </div>
         </div>
-        <div id="weapon-name" class="weapon-name">DEBATE GAVEL</div>
+        <div id="weapon-name" class="weapon-name">ARC WRENCH</div>
         <div class="hud-bar">
-          <span class="label">VOICE</span>
+          <span class="label">PLASMA</span>
           <div class="meter"><div id="voice-fill" class="fill voice"></div></div>
         </div>
         <div id="plaque-toast" class="plaque-toast hidden"></div>
         <div id="convert-toast" class="convert-toast hidden"></div>
-        <div class="help-line">WASD · Dash · LMB fire · 1–7 weapons · F bomb · C freeze · V repel · E shop/interact · Esc</div>
+        <div class="help-line">WASD · Space/J jump · 1 Hand · 2 Wrench · LMB use · E scrap/plaque · Esc pause</div>
       </div>
-      <div id="shop-panel" class="shop-panel hidden">
-        <div class="shop-card">
-          <h2>TRUMP TOWER LOBBY</h2>
-          <p class="shop-sub">Spend <span id="shop-brand">0</span> Brand · Permanent upgrades</p>
-          <div id="shop-list" class="shop-list"></div>
-          <div class="shop-actions">
-            <button type="button" id="btn-shop-close">BACK TO LOBBY</button>
-            <button type="button" id="btn-shop-leave">EXIT TO NEXT SECTION →</button>
-          </div>
-          <p class="shop-hint">Walk into the gold EXIT pad or press the button when done shopping.</p>
-        </div>
-      </div>
+      <div id="shop-panel" class="shop-panel hidden"></div>
       <div id="pause-menu" class="pause-menu hidden">
         <div class="pause-card">
           <h2>PAUSED</h2>
-          <p class="pause-sub">Settings · Auto-saves on pause · Esc to resume</p>
+          <p class="pause-sub">Steampunk slice · Esc to resume</p>
           <label class="slider-row">
             <span>Master</span>
             <input id="vol-master" type="range" min="0" max="100" value="80" />
@@ -87,21 +76,21 @@
       </div>
       <div id="title-screen" class="title-screen">
         <div class="title-card">
-          <p class="eyebrow">MYTHIC RAYCASTER · SYNTH ROCK · ZERO BLOOD</p>
-          <h1>TRUMP DOOM</h1>
-          <p class="subtitle">The Road to the Oval</p>
+          <p class="eyebrow">STEAMPUNK RAYCASTER · VERTICAL SLICE · BRANCH BUILD</p>
+          <h1>BRASSWORK</h1>
+          <p class="subtitle">Foundry Annex</p>
           <p class="blurb">
-            You are the Legend — suited for destiny. Narrative Demons fill the corridors.<br />
-            Debate them. Convert them. <strong>Join the Trump-Train.</strong><br />
-            Episodes 0–1 ready. Read plaques. Push buttons. Call the manager.
+            You are an engineer of plasma and automata.<br />
+            <strong>Arc wrench</strong> disables rogue frames. <strong>Reprogram hand</strong> turns them ally.<br />
+            Jump half a wall. Walk the open yard. Read the brass plaques.
           </p>
           <div class="title-actions">
             <button id="btn-continue" type="button" class="hidden">CONTINUE</button>
-            <button id="btn-new-game" type="button">NEW GAME</button>
+            <button id="btn-new-game" type="button">ENTER THE FOUNDRY</button>
           </div>
           <p id="save-info" class="save-info hidden"></p>
           <p class="disclaimer">
-            Arcade political satire · Non-violent rhetoric combat · Enemies join the Trump-Train · Cartoon caricatures only
+            Vertical slice on branch feature/steampunk-vertical-slice · Jump · Platforms · Reprogram
           </p>
         </div>
       </div>
