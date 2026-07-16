@@ -55,9 +55,13 @@ Trump Doom keeps its raycaster forever on `main`.
 
 3. No separate “melee swipe” while fuse exists — the fuse **is** the close threat.
 
-### Allies
-- Follow, **draw aggro**, fight hostiles, **repair** allies + engineer.  
-- Enable valve seals / crate pry (player still presses E when ally is near).
+### Allies (power budget)
+- Max **3** powered allies at once.  
+- Each ally drains **plasma** continuously (~3.2/s each).  
+- At **0 plasma**, links destabilize; after ~2.8s the furthest ally **turns rogue** (hostile again).  
+- Reprogram blocked when grid is full — scrap or let one starve first.  
+- Wander autonomously near the engineer (soft leash with hysteresis); face walk direction.  
+- Wall collision + separation; draw aggro, fight, repair; enable valves/crates.
 
 ---
 

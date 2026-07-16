@@ -74,6 +74,8 @@ export class ForgeHeartGame {
   /** Last stable standing position — used if we fall through the world */
   private safePos = new THREE.Vector3();
   private safeTimer = 0;
+  /** Time spent at 0 plasma while holding allies */
+  private allyStarveT = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -205,6 +207,7 @@ export class ForgeHeartGame {
     this.atkCd = Math.max(0, this.atkCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
     this.plasma = Math.min(100, this.plasma + dt * 6);
+    this.tickAllyPower(dt);
 
     // Movement relative to camera yaw
     const forward = new THREE.Vector3();
@@ -247,7 +250,9 @@ export class ForgeHeartGame {
     this.weaponEl.textContent = this.weapon === 'hand' ? 'REPROGRAM HAND' : 'ARC WRENCH';
     const allies = this.robots.filter((r) => r.phase === 'ally').length;
     const dis = this.robots.filter((r) => r.phase === 'disabled').length;
-    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies} · DOWN ${dis}${this.onGround ? '' : ' · AIR'}`;
+    const cap = ROBOT.maxAllies;
+    const powerWarn = allies > 0 && this.plasma < 15 ? ' · ⚠ POWER' : '';
+    this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · DOWN ${dis}${powerWarn}${this.onGround ? '' : ' · AIR'}`;
     if (this.locEl) this.locEl.textContent = 'Foundry Annex · ForgeHeart';
 
     if (this.msgT > 0) {
@@ -453,13 +458,129 @@ export class ForgeHeartGame {
         }
       }
       if (best) {
+        const allyCount = this.robots.filter((x) => x.phase === 'ally').length;
+        if (allyCount >= ROBOT.maxAllies) {
+          this.toast(`Power grid full — only ${ROBOT.maxAllies} allies. Scrap or lose one first.`);
+          return;
+        }
+        if (this.plasma < 22) {
+          this.toast('Plasma low — wait to reprogram.');
+          return;
+        }
         this.plasma -= 22;
         best.setPhase('ally');
-        this.flash('REPROGRAMMED — ally draws fire & repairs');
+        best.returning = false;
+        this.flash(`REPROGRAMMED — ${allyCount + 1}/${ROBOT.maxAllies} powered (drains plasma)`);
       } else {
         this.toast('Need scramble-full (dark eyes) or knocked-out frame nearby.');
       }
     }
+  }
+
+  /** Drain plasma to power allies; starvation can turn them rogue. */
+  private tickAllyPower(dt: number) {
+    const allies = this.robots.filter((r) => r.phase === 'ally');
+    if (allies.length === 0) {
+      this.allyStarveT = 0;
+      return;
+    }
+    const drain = ROBOT.allyPowerDrain * allies.length * dt;
+    this.plasma = Math.max(0, this.plasma - drain);
+
+    if (this.plasma <= 0.05) {
+      this.allyStarveT += dt;
+      // Flicker warning via toast occasionally
+      if (Math.floor(this.allyStarveT * 2) !== Math.floor((this.allyStarveT - dt) * 2)) {
+        if (this.allyStarveT < ROBOT.allyStarveTime) {
+          this.toast('⚠ Plasma empty — ally links destabilizing…');
+        }
+      }
+      if (this.allyStarveT >= ROBOT.allyStarveTime && allies.length > 0) {
+        // Furthest ally goes rogue first (dramatic)
+        let worst = allies[0]!;
+        let bestD = -1;
+        const p = this.camera.position;
+        for (const a of allies) {
+          const d = a.position.distanceTo(p);
+          if (d > bestD) {
+            bestD = d;
+            worst = a;
+          }
+        }
+        this.turnAllyRogue(worst);
+        this.allyStarveT = 0; // reset; next loss if still starved
+      }
+    } else {
+      this.allyStarveT = Math.max(0, this.allyStarveT - dt * 1.5);
+    }
+  }
+
+  private turnAllyRogue(r: RobotUnit) {
+    r.phase = 'active';
+    r.scrambled = false;
+    r.scramble = 0;
+    r.hp = Math.max(50, r.hp);
+    r.maxHp = ROBOT.maxHp;
+    r.setPhase('active');
+    r.mode = 'chase';
+    r.returning = false;
+    r.fuseT = 0;
+    this.flash('LINK SEVERED — a frame turned rogue!');
+  }
+
+  /** Move robot in XZ with wall collision; returns actual delta applied. */
+  private moveRobot(r: RobotUnit, wish: THREE.Vector3, speed: number, dt: number): THREE.Vector3 {
+    const applied = new THREE.Vector3();
+    if (wish.lengthSq() < 1e-6) return applied;
+    const dir = wish.clone().setY(0);
+    if (dir.lengthSq() < 1e-6) return applied;
+    dir.normalize();
+
+    const tryMove = (axis: 'x' | 'z', amount: number) => {
+      if (Math.abs(amount) < 1e-8) return 0;
+      const prev = r.position[axis];
+      r.position[axis] += amount;
+      const rad = r.radius;
+      const min = new THREE.Vector3(
+        r.position.x - rad,
+        r.position.y + 0.15,
+        r.position.z - rad,
+      );
+      const max = new THREE.Vector3(
+        r.position.x + rad,
+        r.position.y + 1.55,
+        r.position.z + rad,
+      );
+      for (const c of this.colliders) {
+        // Ignore pure floor slabs we're standing on (short boxes under feet)
+        const feet = r.position.y + 0.05;
+        if (c.max.y <= feet + 0.35 && c.min.y < feet) continue;
+        if (!aabbOverlap(min, max, c.min, c.max)) continue;
+        if (axis === 'x') {
+          if (amount > 0) r.position.x = c.min.x - rad - 0.01;
+          else r.position.x = c.max.x + rad + 0.01;
+        } else {
+          if (amount > 0) r.position.z = c.min.z - rad - 0.01;
+          else r.position.z = c.max.z + rad + 0.01;
+        }
+        min.x = r.position.x - rad;
+        max.x = r.position.x + rad;
+        min.z = r.position.z - rad;
+        max.z = r.position.z + rad;
+      }
+      return r.position[axis] - prev;
+    };
+
+    const dx = dir.x * speed * dt;
+    const dz = dir.z * speed * dt;
+    applied.x = tryMove('x', dx);
+    applied.z = tryMove('z', dz);
+
+    // If almost stuck, nudge wander heading
+    if (applied.lengthSq() < (speed * dt * 0.15) ** 2 && wish.lengthSq() > 0.1) {
+      r.wanderAngle += (Math.random() > 0.5 ? 1 : -1) * (0.8 + Math.random() * 1.2);
+    }
+    return applied;
   }
 
   private spawnArcFx() {
@@ -652,25 +773,25 @@ export class ForgeHeartGame {
         continue;
       }
 
-      // Chase (slow) + separation so hostiles don't stack
+      // Chase (slow) + separation so hostiles don't stack + wall collision
       let moving = false;
+      const wish = new THREE.Vector3();
       if (dist < 18 && dist > ROBOT.fuseTriggerRange + 0.15) {
         const dir = playerFeet.clone().sub(r.position);
         dir.y = 0;
         if (dir.lengthSq() > 0.01) {
           dir.normalize();
           const sep = this.separation(r, ROBOT.enemySeparateRadius, ROBOT.enemySeparateStrength, 'hostile');
-          dir.add(sep).normalize();
-          r.position.addScaledVector(dir, ROBOT.chaseSpeed * dt);
-          moving = true;
+          wish.copy(dir).add(sep);
         }
       } else {
-        // Still un-clump while near player / fuse edge
         const sep = this.separation(r, ROBOT.enemySeparateRadius, ROBOT.enemySeparateStrength, 'hostile');
-        if (sep.lengthSq() > 0.01) {
-          r.position.addScaledVector(sep.normalize(), ROBOT.chaseSpeed * 0.6 * dt);
-          moving = true;
-        }
+        if (sep.lengthSq() > 0.01) wish.copy(sep);
+      }
+      if (wish.lengthSq() > 0.01) {
+        const applied = this.moveRobot(r, wish, ROBOT.chaseSpeed, dt);
+        moving = applied.lengthSq() > 1e-6;
+        if (moving) this.faceMoveDir(r, applied);
       }
       r.mode = 'chase';
       r.tickAnim(dt, moving, 'chase');
@@ -727,25 +848,31 @@ export class ForgeHeartGame {
     r.mode = 'ally';
     const dist = r.position.distanceTo(playerFeet);
     let moving = false;
-    const move = new THREE.Vector3();
+    const wish = new THREE.Vector3();
 
-    // Idle — face last walk dir, don't stare at player
-    if (r.idleT > 0) {
+    // Hysteresis leash — no twitching at one threshold
+    if (!r.returning && dist > ROBOT.allyLeashHard) r.returning = true;
+    if (r.returning && dist < ROBOT.allyResumeWander) r.returning = false;
+
+    // Idle only when not returning and not in combat
+    if (r.idleT > 0 && !r.returning) {
       r.idleT -= dt;
       const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
       if (sep.lengthSq() > 0.05) {
-        const s = sep.normalize();
-        r.position.addScaledVector(s, ROBOT.allySpeed * 0.4 * dt);
-        this.faceMoveDir(r, s);
-        moving = true;
+        const applied = this.moveRobot(r, sep, ROBOT.allySpeed * 0.4, dt);
+        if (applied.lengthSq() > 1e-6) {
+          this.faceMoveDir(r, applied);
+          moving = true;
+        }
       } else {
         const look = r.position.clone().add(r.faceDir);
         r.mesh.lookAt(look.x, r.position.y, look.z);
       }
-      if (dist > ROBOT.allyLeashHard * 0.85) r.idleT = 0;
+      if (dist > ROBOT.allyLeashHard * 0.9) r.idleT = 0;
       else {
         r.tickAnim(dt, moving, 'ally');
         this.allyCombatAndRepair(r, dt, playerFeet);
+        this.snapRobotToFloor(r);
         return;
       }
     }
@@ -753,12 +880,11 @@ export class ForgeHeartGame {
     r.nextIdleRoll -= dt;
     if (r.nextIdleRoll <= 0) {
       r.nextIdleRoll = 2.8 + Math.random() * 4;
-      if (dist < ROBOT.allyLeashComfort && Math.random() < ROBOT.allyIdleChance) {
+      if (!r.returning && dist < ROBOT.allyLeashComfort && Math.random() < ROBOT.allyIdleChance) {
         r.idleT = ROBOT.allyIdleMin + Math.random() * (ROBOT.allyIdleMax - ROBOT.allyIdleMin);
       }
     }
 
-    // Fight nearby hostiles (face the foe only while engaged)
     let foe: RobotUnit | null = null;
     let fd = 6;
     for (const o of this.robots) {
@@ -770,74 +896,57 @@ export class ForgeHeartGame {
       }
     }
 
+    let speed: number = ROBOT.allyWanderSpeed;
+
     if (foe && fd < 7.5) {
       if (fd > 1.5) {
         const toward = foe.position.clone().sub(r.position);
         toward.y = 0;
-        toward.normalize();
-        move.addScaledVector(toward, 1);
+        if (toward.lengthSq() > 0.01) wish.add(toward.normalize());
       }
-      // Face combat target while fighting
+      speed = ROBOT.allySpeed * 0.95;
       r.mesh.lookAt(foe.position.x, r.position.y, foe.position.z);
-    } else if (dist > ROBOT.allyLeashHard) {
-      // Soft leash only when too far — catch up, then resume wander
+    } else if (r.returning) {
+      // Steady catch-up until inside resumeWander — no flip-flop
       const toward = playerFeet.clone().sub(r.position);
       toward.y = 0;
-      toward.normalize();
-      move.addScaledVector(toward, 1.25);
+      if (toward.lengthSq() > 0.01) wish.add(toward.normalize());
+      speed = ROBOT.allySpeed;
     } else {
-      // Autonomous wander: pick occasional new headings, drift around
+      // Autonomous wander
       r.wanderTimer -= dt;
       if (r.wanderTimer <= 0) {
-        r.wanderTimer = 1.2 + Math.random() * 2.8;
-        // Prefer continuing forward with a random turn (not orbiting player)
-        r.wanderAngle += (Math.random() - 0.5) * 1.8;
+        r.wanderTimer = 1.4 + Math.random() * 3.2;
+        r.wanderAngle += (Math.random() - 0.5) * 1.6;
       }
       const wander = new THREE.Vector3(Math.cos(r.wanderAngle), 0, Math.sin(r.wanderAngle));
 
-      // Mild bias away if a bit close, toward if a bit far — not a ring
-      if (dist < 1.4) {
+      if (dist < 1.5) {
         const away = r.position.clone().sub(playerFeet);
         away.y = 0;
-        if (away.lengthSq() > 0.01) {
-          away.normalize();
-          wander.addScaledVector(away, 0.55);
-        }
-      } else if (dist > ROBOT.allyLeashComfort) {
+        if (away.lengthSq() > 0.01) wander.addScaledVector(away.normalize(), 0.5);
+      }
+      // Very mild bias when past comfort but not yet "returning"
+      if (dist > ROBOT.allyLeashComfort && dist < ROBOT.allyLeashHard) {
+        const t = (dist - ROBOT.allyLeashComfort) / (ROBOT.allyLeashHard - ROBOT.allyLeashComfort);
         const toward = playerFeet.clone().sub(r.position);
         toward.y = 0;
-        toward.normalize();
-        // Gentle pull only — still mostly wander
-        wander.addScaledVector(toward, 0.35 + (dist - ROBOT.allyLeashComfort) * 0.12);
+        if (toward.lengthSq() > 0.01) wander.addScaledVector(toward.normalize(), 0.15 + t * 0.35);
       }
 
-      if (wander.lengthSq() > 0.01) {
-        wander.normalize();
-        move.addScaledVector(wander, 0.85);
-      }
+      if (wander.lengthSq() > 0.01) wish.add(wander.normalize());
+      speed = ROBOT.allyWanderSpeed;
     }
 
-    // Separation always
     const sep = this.separation(r, ROBOT.separateRadius, ROBOT.separateStrength, 'ally');
     sep.add(this.separation(r, ROBOT.enemySeparateRadius * 0.9, 1.4, 'hostile'));
-    move.add(sep);
+    wish.add(sep);
 
-    if (move.lengthSq() > 0.02) {
-      const dir = move.clone().setY(0);
-      if (dir.lengthSq() > 0.0001) {
-        dir.normalize();
-        const speed =
-          dist > ROBOT.allyLeashHard
-            ? ROBOT.allySpeed
-            : foe && fd < 7.5
-              ? ROBOT.allySpeed * 0.95
-              : ROBOT.allyWanderSpeed;
-        r.position.addScaledVector(dir, speed * dt);
+    if (wish.lengthSq() > 0.02) {
+      const applied = this.moveRobot(r, wish, speed, dt);
+      if (applied.lengthSq() > 1e-6) {
         moving = true;
-        // Face walk direction unless mid-combat with a foe in melee range
-        if (!(foe && fd < 2.2)) {
-          this.faceMoveDir(r, dir);
-        }
+        if (!(foe && fd < 2.2)) this.faceMoveDir(r, applied);
       }
     }
 

@@ -24,13 +24,24 @@ export const ROBOT = {
   scramblePerHit: 28,
   chaseSpeed: 1.55,
   allySpeed: 1.85,
-  /** Soft leash — wander freely inside, only pull when farther */
-  allyLeashComfort: 4.5,
-  allyLeashHard: 7.5,
+  /**
+   * Soft leash with hysteresis (stops edge twitching):
+   * wander freely under comfort; start return above hard;
+   * keep returning until back under resumeWander.
+   */
+  allyLeashComfort: 5.0,
+  allyLeashHard: 8.0,
+  allyResumeWander: 4.2,
   allyWanderSpeed: 1.35,
   allyIdleChance: 0.4,
   allyIdleMin: 1.4,
   allyIdleMax: 4.0,
+  /** Max simultaneous powered allies */
+  maxAllies: 3,
+  /** Plasma drain per ally per second */
+  allyPowerDrain: 3.2,
+  /** Seconds at 0 plasma before an ally risks going rogue */
+  allyStarveTime: 2.8,
   /** Soft separation radius (don't clump) */
   separateRadius: 1.35,
   separateStrength: 2.8,
@@ -79,6 +90,10 @@ export class RobotUnit {
   nextIdleRoll = 1 + Math.random() * 2;
   /** Last horizontal move dir for facing */
   faceDir = new THREE.Vector3(0, 0, 1);
+  /** Ally leash state — hysteresis, avoids twitch at boundary */
+  returning = false;
+  /** Body radius for wall collision */
+  radius = 0.38;
 
   private body: THREE.Group;
   private legL: THREE.Mesh;
