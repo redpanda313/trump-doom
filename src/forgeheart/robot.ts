@@ -1,22 +1,64 @@
 import * as THREE from 'three';
 import type { Mats } from './materials';
 
+/**
+ * Combat fantasy (v2):
+ * - ~4–5 rapid arc hits knock out via Integrity (they constantly repair).
+ * - Scramble builds per hit and STAYS. Spread hits so they heal HP while
+ *   scramble fills → eyes go dark, still fighting, ready to REPROGRAM.
+ * - Close range: self-destruct fuse (cancel if player leaves blast radius).
+ * - Ranged: every ~4s pause, crouch, slow spark bolt with gentle tracking.
+ */
+
 export type RobotPhase = 'active' | 'disabled' | 'ally' | 'husk';
+
+export type CombatMode = 'chase' | 'windup_bolt' | 'fuse' | 'disabled' | 'ally';
+
+export const ROBOT = {
+  maxHp: 110,
+  /** Repair per second while active */
+  repairPerSec: 14,
+  /** Damage per arc hit (~5 hits to KO if rapid) */
+  arcDamage: 24,
+  /** Scramble per arc hit (~4 hits to full) */
+  scramblePerHit: 28,
+  chaseSpeed: 1.55,
+  allySpeed: 2.2,
+  meleeRange: 1.55,
+  meleeDamage: 10,
+  meleeCd: 1.15,
+  /** Start self-destruct when this close */
+  fuseTriggerRange: 2.15,
+  /** Cancel fuse if player farther than this (past blast hurt range) */
+  fuseCancelRange: 3.6,
+  fuseDuration: 2.6,
+  blastRadius: 3.2,
+  blastDamage: 42,
+  boltCd: 4.2,
+  boltWindup: 0.85,
+  boltSpeed: 4.2,
+  boltTurnRate: 1.1, // rad/sec max steer
+  boltDamage: 16,
+  boltLife: 5,
+} as const;
 
 export class RobotUnit {
   mesh: THREE.Group;
   phase: RobotPhase = 'active';
-  /** Integrity */
-  hp = 80;
-  maxHp = 80;
-  /** Scramble / EMP build-up 0–100 */
+  hp: number = ROBOT.maxHp;
+  maxHp: number = ROBOT.maxHp;
+  /** Scramble 0–100 — persists; full = eyes dark, reprogram-ready */
   scramble = 0;
+  scrambled = false;
   attackCd = 0;
+  boltCd = 1.5 + Math.random() * 2;
   repairCd = 0;
   anim = 0;
-  /** Aggro target player or null */
   aggro = false;
-  velocity = new THREE.Vector3();
+  mode: CombatMode = 'chase';
+  fuseT = 0;
+  windupT = 0;
+  flashPhase = 0;
 
   private body: THREE.Group;
   private legL: THREE.Mesh;
@@ -25,16 +67,20 @@ export class RobotUnit {
   private armR: THREE.Mesh;
   private eyeL: THREE.Mesh;
   private eyeR: THREE.Mesh;
+  private antenna: THREE.Mesh;
+  private torso: THREE.Mesh;
   private mats: Mats;
+  private flashMat: THREE.MeshStandardMaterial;
 
   constructor(mats: Mats, position: THREE.Vector3) {
     this.mats = mats;
     this.mesh = new THREE.Group();
     this.body = new THREE.Group();
 
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 0.45), mats.brass);
-    torso.position.y = 1.1;
-    torso.castShadow = true;
+    this.flashMat = mats.brass.clone();
+    this.torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.85, 0.45), this.flashMat);
+    this.torso.position.y = 1.1;
+    this.torso.castShadow = true;
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.4, 0.4), mats.brassDark);
     head.position.y = 1.7;
     head.castShadow = true;
@@ -42,13 +88,13 @@ export class RobotUnit {
     this.eyeR = this.eyeL.clone();
     this.eyeL.position.set(-0.12, 1.72, 0.2);
     this.eyeR.position.set(0.12, 1.72, 0.2);
+    this.antenna = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), mats.emissiveRed);
+    this.antenna.position.set(0, 1.95, 0);
 
     this.legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.55, 0.2), mats.iron);
     this.legR = this.legL.clone();
     this.legL.position.set(-0.18, 0.35, 0);
     this.legR.position.set(0.18, 0.35, 0);
-    this.legL.castShadow = true;
-    this.legR.castShadow = true;
 
     this.armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.14), mats.ironDark);
     this.armR = this.armL.clone();
@@ -58,7 +104,18 @@ export class RobotUnit {
     const gauge = new THREE.Mesh(new THREE.CircleGeometry(0.12, 12), mats.emissiveAmber);
     gauge.position.set(0, 1.15, 0.24);
 
-    this.body.add(torso, head, this.eyeL, this.eyeR, this.legL, this.legR, this.armL, this.armR, gauge);
+    this.body.add(
+      this.torso,
+      head,
+      this.eyeL,
+      this.eyeR,
+      this.antenna,
+      this.legL,
+      this.legR,
+      this.armL,
+      this.armR,
+      gauge,
+    );
     this.mesh.add(this.body);
     this.mesh.position.copy(position);
   }
@@ -67,60 +124,189 @@ export class RobotUnit {
     return this.mesh.position;
   }
 
+  get reprogramReady(): boolean {
+    return this.scrambled || this.phase === 'disabled';
+  }
+
   setPhase(p: RobotPhase) {
     this.phase = p;
+    this.mode = p === 'ally' ? 'ally' : p === 'disabled' ? 'disabled' : 'chase';
     if (p === 'disabled') {
-      this.body.rotation.x = 0.35;
-      this.eyeL.material = this.mats.iron;
-      this.eyeR.material = this.mats.iron;
+      this.body.rotation.x = 0.4;
+      this.setEyes('off');
+      this.fuseT = 0;
+      this.windupT = 0;
     } else if (p === 'ally') {
       this.body.rotation.x = 0;
-      this.eyeL.material = this.mats.emissiveGreen;
-      this.eyeR.material = this.mats.emissiveGreen;
-      this.hp = 40;
-      this.maxHp = 40;
+      this.setEyes('ally');
+      this.hp = 45;
+      this.maxHp = 45;
       this.scramble = 0;
+      this.scrambled = false;
+      this.fuseT = 0;
     } else if (p === 'husk') {
       this.mesh.visible = false;
     } else {
       this.body.rotation.x = 0;
+      this.setEyes(this.scrambled ? 'off' : 'hostile');
+    }
+  }
+
+  private setEyes(mode: 'hostile' | 'ally' | 'off') {
+    if (mode === 'hostile') {
       this.eyeL.material = this.mats.emissiveRed;
       this.eyeR.material = this.mats.emissiveRed;
+      this.antenna.material = this.mats.emissiveRed;
+    } else if (mode === 'ally') {
+      this.eyeL.material = this.mats.emissiveGreen;
+      this.eyeR.material = this.mats.emissiveGreen;
+      this.antenna.material = this.mats.emissiveGreen;
+    } else {
+      this.eyeL.material = this.mats.iron;
+      this.eyeR.material = this.mats.iron;
+      this.antenna.material = this.mats.ironDark;
     }
   }
 
-  /** Shuffle walk + attack lean */
-  tickAnim(dt: number, moving: boolean, attacking: boolean) {
-    this.anim += dt * (moving ? 8 : 2);
+  tickAnim(dt: number, moving: boolean, mode: CombatMode) {
+    this.anim += dt * (moving ? 6 : mode === 'fuse' ? 14 : 2);
     const s = Math.sin(this.anim);
-    if (this.phase === 'disabled') {
-      this.legL.rotation.x = 0.5;
-      this.legR.rotation.x = 0.5;
+
+    if (mode === 'disabled') {
+      this.legL.rotation.x = 0.55;
+      this.legR.rotation.x = 0.55;
+      this.armL.rotation.x = 0.3;
+      this.armR.rotation.x = 0.3;
+      this.body.position.y = -0.15;
       return;
     }
-    if (attacking) {
-      this.armR.rotation.x = -1.2;
-      this.body.position.z = 0.08;
+
+    if (mode === 'fuse') {
+      // Stop, tremble, flash
+      this.legL.rotation.x = 0.15;
+      this.legR.rotation.x = 0.15;
+      this.armL.rotation.x = -0.4 + s * 0.15;
+      this.armR.rotation.x = -0.4 - s * 0.15;
+      this.body.position.y = Math.abs(s) * 0.06;
+      this.body.rotation.y = s * 0.08;
+      // Flash white-hot faster as fuse progresses
+      const t = this.fuseT / ROBOT.fuseDuration;
+      const flashHz = 2 + t * 14;
+      this.flashPhase += dt * flashHz * Math.PI * 2;
+      const on = Math.sin(this.flashPhase) > 0;
+      this.flashMat.emissive = new THREE.Color(on ? 0xff4400 : 0x000000);
+      this.flashMat.emissiveIntensity = on ? 0.3 + t * 1.4 : 0;
+      this.flashMat.color.set(on ? 0xffcc88 : 0xb8923a);
+      return;
     } else {
-      this.armR.rotation.x = moving ? s * 0.4 : 0;
-      this.armL.rotation.x = moving ? -s * 0.4 : 0;
-      this.body.position.z = 0;
+      this.flashMat.emissive.setHex(0x000000);
+      this.flashMat.emissiveIntensity = 0;
+      this.flashMat.color.set(0xb8923a);
+      this.body.rotation.y = 0;
     }
-    this.legL.rotation.x = moving ? s * 0.55 : 0;
-    this.legR.rotation.x = moving ? -s * 0.55 : 0;
-    this.body.position.y = moving ? Math.abs(s) * 0.04 : 0;
+
+    if (mode === 'windup_bolt') {
+      // Crouch and charge
+      this.body.position.y = -0.22;
+      this.legL.rotation.x = 0.6;
+      this.legR.rotation.x = 0.6;
+      this.armR.rotation.x = -1.4;
+      this.armL.rotation.x = 0.2;
+      return;
+    }
+
+    this.body.position.y = moving ? Math.abs(s) * 0.035 : 0;
+    this.armR.rotation.x = moving ? s * 0.35 : 0;
+    this.armL.rotation.x = moving ? -s * 0.35 : 0;
+    this.legL.rotation.x = moving ? s * 0.45 : 0;
+    this.legR.rotation.x = moving ? -s * 0.45 : 0;
   }
 
-  applyArc(damage: number, scrambleAdd: number): 'hurt' | 'disabled' | 'none' {
+  /** Passive repair while active (including scrambled). */
+  tickRepair(dt: number) {
+    if (this.phase !== 'active') return;
+    if (this.hp < this.maxHp) {
+      this.hp = Math.min(this.maxHp, this.hp + ROBOT.repairPerSec * dt);
+    }
+  }
+
+  /**
+   * Arc hit. Returns:
+   * - hurt: still fighting
+   * - scrambled: scramble just filled (eyes out, reprogram-ready, still fighting)
+   * - disabled: integrity depleted (kneel — scrap or reprogram)
+   */
+  applyArc(damage: number, scrambleAdd: number): 'hurt' | 'scrambled' | 'disabled' | 'none' {
     if (this.phase !== 'active') return 'none';
+    // Cancel fuse if hit hard mid-sequence (stagger interrupt)
+    if (this.mode === 'fuse') {
+      this.mode = 'chase';
+      this.fuseT = 0;
+    }
     this.hp -= damage;
+    const wasScrambled = this.scrambled;
     this.scramble = Math.min(100, this.scramble + scrambleAdd);
-    if (this.scramble >= 100 || this.hp <= 0) {
-      this.hp = Math.max(0, this.hp);
+    if (this.scramble >= 100 && !this.scrambled) {
+      this.scrambled = true;
+      this.setEyes('off');
+    }
+    if (this.hp <= 0) {
+      this.hp = 0;
       this.setPhase('disabled');
       return 'disabled';
     }
+    if (this.scrambled && !wasScrambled) return 'scrambled';
     return 'hurt';
+  }
+}
+
+export class SparkBolt {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  life: number;
+  damage: number;
+  light: THREE.PointLight;
+
+  constructor(origin: THREE.Vector3, dir: THREE.Vector3) {
+    const geo = new THREE.SphereGeometry(0.18, 8, 8);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x88ddff });
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh.position.copy(origin).add(new THREE.Vector3(0, 1.2, 0));
+    this.velocity = dir.clone().normalize().multiplyScalar(ROBOT.boltSpeed);
+    this.life = ROBOT.boltLife;
+    this.damage = ROBOT.boltDamage;
+    this.light = new THREE.PointLight(0x66ccff, 1.5, 6);
+    this.mesh.add(this.light);
+  }
+
+  /**
+   * Gentle homing — limited turn rate so the bolt can't spin-track.
+   */
+  update(dt: number, target: THREE.Vector3): boolean {
+    this.life -= dt;
+    if (this.life <= 0) return false;
+
+    const desired = target.clone().sub(this.mesh.position);
+    desired.y *= 0.3;
+    if (desired.lengthSq() > 0.01) {
+      desired.normalize();
+      const cur = this.velocity.clone().normalize();
+      // Slerp direction with max turn
+      const maxTurn = ROBOT.boltTurnRate * dt;
+      const dot = Math.max(-1, Math.min(1, cur.dot(desired)));
+      const ang = Math.acos(dot);
+      if (ang > 0.001) {
+        const t = Math.min(1, maxTurn / ang);
+        const newDir = cur.lerp(desired, t).normalize();
+        this.velocity.copy(newDir.multiplyScalar(ROBOT.boltSpeed));
+      }
+    }
+
+    this.mesh.position.addScaledVector(this.velocity, dt);
+    // Spark pulse
+    const s = 0.9 + Math.sin(this.life * 20) * 0.15;
+    this.mesh.scale.setScalar(s);
+    return true;
   }
 }
 
@@ -134,5 +320,25 @@ export function createHusk(mats: Mats, pos: THREE.Vector3): THREE.Group {
   g.add(a, b);
   g.position.copy(pos);
   g.position.y = 0;
+  return g;
+}
+
+export function createBlastFx(pos: THREE.Vector3): THREE.Group {
+  const g = new THREE.Group();
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.4, 12, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xff6622,
+      transparent: true,
+      opacity: 0.85,
+    }),
+  );
+  g.add(sphere);
+  const light = new THREE.PointLight(0xff5500, 4, 10);
+  g.add(light);
+  g.position.copy(pos);
+  g.position.y += 1;
+  g.userData.life = 0.45;
+  g.userData.maxLife = 0.45;
   return g;
 }

@@ -30,27 +30,34 @@ Trump Doom keeps its raycaster forever on `main`.
 
 ---
 
-## Disable / scrap / reprogram (designer choice)
+## Robot combat (v2 — dramatic loop)
 
-**Stagger → Disabled → Choice**
+### Integrity vs Scramble (two paths)
 
-1. **Active** — robot fights; has Integrity (HP).  
-2. **Arc wrench** applies damage **and** fills a **Scramble** meter (EMP build-up).  
-3. When Scramble fills **or** Integrity hits 0 → **Disabled** (kneel, sparks, no attack).  
-4. Player choice while disabled:  
-   - **Reprogram hand** (costs Plasma) → **Ally** (low HP, follows, **draws aggro**, fights, **repairs allies**).  
-   - **Scrap** (interact) → **Husk** + **Brass / Gears** resources (more if Scramble-killed cleanly).  
-5. Overkill without disable: still husks, but **reduced scrap** (encourages intentional disable).
+| Path | How | Result |
+|------|-----|--------|
+| **Knock out (rapid hits)** | ~4–5 arc hits before self-repair recovers HP | **Disabled** (kneel) → scrap or reprogram |
+| **Rewrite (spaced hits)** | Scramble builds & **stays**; HP repairs between swings | **Scramble full** → **eyes go dark**, still chases/fights → **Hand reprogram** without knockout |
 
-**Allies**
-- Follow the engineer within leash range.  
-- Prefer nearest hostile; **pull aggro** when they deal or take damage.  
-- **Repair** nearby damaged allies / player slowly (oil aura).  
-- Can be ordered later (v2); slice = follow + fight + repair.
+- Arc: ~24 damage + ~28 scramble per hit; robots repair ~14 HP/s.  
+- **Rapid** melée: net damage wins → knockout.  
+- **Spaced** melée: HP heals, scramble reaches 100 → dark eyes, reprogram-ready while active.  
+- Scrap only on **disabled** husk path (E). Bonus brass if scramble was full.
 
-**Environmental allies (slice → expand)**
-- Ally near a **sealed valve / brass seal** can open **hidden doors** after a short channel.  
-- Broken crates near allies rattle open → **health / plasma / brass** drops.
+### Attacks
+
+1. **Self-destruct (close)**  
+   Within ~2.1 m: stop, flash faster for **2.6 s**, explode **~3.2 m** radius, heavy damage.  
+   If the player leaves past blast range mid-fuse → **cancel**, resume chase.
+
+2. **Spark bolt (ranged)**  
+   Every ~4 s at mid range: pause, crouch, fire a **slow** bolt that tracks with a **low turn rate** (dodgeable).
+
+3. No separate “melee swipe” while fuse exists — the fuse **is** the close threat.
+
+### Allies
+- Follow, **draw aggro**, fight hostiles, **repair** allies + engineer.  
+- Enable valve seals / crate pry (player still presses E when ally is near).
 
 ---
 

@@ -15,7 +15,13 @@ import {
   type LevelBuilt,
   aabbOverlap,
 } from './level';
-import { RobotUnit, createHusk } from './robot';
+import {
+  RobotUnit,
+  SparkBolt,
+  createHusk,
+  createBlastFx,
+  ROBOT,
+} from './robot';
 
 const GRAVITY = 28;
 const MOVE_SPEED = 7;
@@ -47,6 +53,8 @@ export class ForgeHeartGame {
 
   private robots: RobotUnit[] = [];
   private husks: THREE.Object3D[] = [];
+  private bolts: SparkBolt[] = [];
+  private blasts: THREE.Group[] = [];
   private interactables: Interactable[] = [];
   private exit: THREE.Vector3;
   private won = false;
@@ -226,6 +234,8 @@ export class ForgeHeartGame {
     if (this.fireHeld || this.keys.has('ControlLeft')) this.tryFire();
 
     this.updateRobots(dt);
+    this.updateBolts(dt);
+    this.updateBlasts(dt);
     this.updateArcVisual(dt);
     this.checkExit();
 
@@ -406,7 +416,7 @@ export class ForgeHeartGame {
   private tryFire() {
     if (this.atkCd > 0) return;
     if (this.weapon === 'wrench') {
-      this.atkCd = 0.38;
+      this.atkCd = 0.36;
       this.spawnArcFx();
       const origin = this.camera.position.clone();
       const dir = new THREE.Vector3();
@@ -415,23 +425,27 @@ export class ForgeHeartGame {
         if (r.phase !== 'active') continue;
         const to = r.position.clone().add(new THREE.Vector3(0, 1, 0)).sub(origin);
         const dist = to.length();
-        if (dist > 2.4 || dist < 0.01) continue;
+        if (dist > 2.5 || dist < 0.01) continue;
         to.normalize();
-        if (to.dot(dir) < 0.55) continue;
-        const res = r.applyArc(18, 34);
-        if (res === 'disabled') this.flash('Frame disabled — Hand to rewrite, E to scrap');
+        if (to.dot(dir) < 0.52) continue;
+        const res = r.applyArc(ROBOT.arcDamage, ROBOT.scramblePerHit);
+        if (res === 'disabled') {
+          this.flash('KNOCKED OUT — E scrap · Hand reprogram');
+        } else if (res === 'scrambled') {
+          this.flash('SCRAMBLE FULL — eyes dark! Hand to rewrite while it still walks');
+        }
       }
     } else {
-      // Reprogram
+      // Reprogram: scrambled (eyes out) OR disabled
       this.atkCd = 0.45;
       if (this.plasma < 22) {
         this.toast('Plasma low — wait to reprogram.');
         return;
       }
       let best: RobotUnit | null = null;
-      let bestD = 2.2;
+      let bestD = 2.4;
       for (const r of this.robots) {
-        if (r.phase !== 'disabled') continue;
+        if (!r.reprogramReady) continue;
         const d = r.position.distanceTo(this.camera.position);
         if (d < bestD) {
           best = r;
@@ -441,9 +455,9 @@ export class ForgeHeartGame {
       if (best) {
         this.plasma -= 22;
         best.setPhase('ally');
-        this.flash('REPROGRAMMED — ally frame online');
+        this.flash('REPROGRAMMED — ally draws fire & repairs');
       } else {
-        this.toast('No disabled frame nearby. Arc them first.');
+        this.toast('Need scramble-full (dark eyes) or knocked-out frame nearby.');
       }
     }
   }
@@ -564,115 +578,97 @@ export class ForgeHeartGame {
 
   private updateRobots(dt: number) {
     const playerPos = this.camera.position.clone();
-    playerPos.y -= 0.5;
+    const playerFeet = playerPos.clone();
+    playerFeet.y -= 0.4;
 
     for (const r of this.robots) {
       if (r.phase === 'husk') continue;
       r.attackCd = Math.max(0, r.attackCd - dt);
+      r.boltCd = Math.max(0, r.boltCd - dt);
       r.repairCd = Math.max(0, r.repairCd - dt);
+      r.tickRepair(dt);
 
       if (r.phase === 'disabled') {
-        r.tickAnim(dt, false, false);
+        r.mode = 'disabled';
+        r.tickAnim(dt, false, 'disabled');
+        this.snapRobotToFloor(r);
         continue;
       }
 
-      if (r.phase === 'active') {
-        // Chase player or aggro
-        const target = playerPos;
-        const dist = r.position.distanceTo(target);
-        let moving = false;
-        if (dist < 16 && dist > 1.3) {
-          const dir = target.clone().sub(r.position);
-          dir.y = 0;
-          dir.normalize();
-          r.position.addScaledVector(dir, 2.1 * dt);
-          r.mesh.lookAt(target.x, r.position.y, target.z);
-          moving = true;
-        }
-        const attacking = dist < 1.6 && r.attackCd <= 0;
-        if (attacking && this.invuln <= 0) {
-          r.attackCd = 1.05;
-          this.health -= 11;
-          this.invuln = 0.5;
-          if (this.health <= 0) {
-            this.health = 100;
-            this.camera.position.set(
-              this.level.spawn.x,
-              this.level.spawn.y + PLAYER_H * 0.9,
-              this.level.spawn.z,
-            );
-            this.toast('Integrity failed — returned to annex door.');
-          }
-        }
-        r.tickAnim(dt, moving, r.attackCd > 0.75);
-      }
-
       if (r.phase === 'ally') {
-        // Follow player
-        const dist = r.position.distanceTo(playerPos);
-        let moving = false;
-        if (dist > 2.2 && dist < 20) {
-          const dir = playerPos.clone().sub(r.position);
-          dir.y = 0;
-          dir.normalize();
-          r.position.addScaledVector(dir, 2.8 * dt);
-          moving = true;
-        }
-        // Attack nearest hostile + aggro
-        let foe: RobotUnit | null = null;
-        let fd = 5;
-        for (const o of this.robots) {
-          if (o.phase !== 'active') continue;
-          const d = o.position.distanceTo(r.position);
-          if (d < fd) {
-            fd = d;
-            foe = o;
-          }
-        }
-        if (foe && fd < 1.5 && r.attackCd <= 0) {
-          r.attackCd = 0.85;
-          foe.aggro = true;
-          const res = foe.applyArc(10, 20);
-          if (res === 'disabled') this.toast('Ally disabled a frame!');
-        }
-        // Chase aggro targets slightly
-        if (foe && fd < 8 && fd > 1.5) {
-          const dir = foe.position.clone().sub(r.position);
-          dir.y = 0;
-          dir.normalize();
-          r.position.addScaledVector(dir, 2.4 * dt);
-          moving = true;
-        }
-        // Repair allies and player
-        if (r.repairCd <= 0) {
-          for (const o of this.robots) {
-            if (o === r || o.phase !== 'ally') continue;
-            if (o.position.distanceTo(r.position) < 3 && o.hp < o.maxHp) {
-              o.hp = Math.min(o.maxHp, o.hp + 6);
-              r.repairCd = 1.2;
-            }
-          }
-          if (r.position.distanceTo(playerPos) < 3 && this.health < 100) {
-            this.health = Math.min(100, this.health + 4);
-            r.repairCd = 1.2;
-          }
-        }
-        // Ally channel valve / crate when near
-        for (const it of this.interactables) {
-          if (!it.needsAlly || it.opened) continue;
-          if (r.position.distanceTo(it.position) < 2.5) {
-            // auto-assist slowly — player still presses E when ally present
-          }
-        }
-        r.tickAnim(dt, moving, r.attackCd > 0.7);
-        // Keep on floor height approximate
+        this.updateAlly(r, dt, playerFeet);
         this.snapRobotToFloor(r);
+        continue;
       }
 
-      if (r.phase === 'active') this.snapRobotToFloor(r);
+      // ——— Hostile AI ———
+      const dist = r.position.distanceTo(playerFeet);
+      r.mesh.lookAt(playerFeet.x, r.position.y, playerFeet.z);
+
+      // Self-destruct fuse when very close
+      if (r.mode === 'fuse') {
+        r.fuseT += dt;
+        r.tickAnim(dt, false, 'fuse');
+        if (dist > ROBOT.fuseCancelRange) {
+          r.mode = 'chase';
+          r.fuseT = 0;
+          this.toast('Self-destruct cancelled — frame resumes pursuit.');
+        } else if (r.fuseT >= ROBOT.fuseDuration) {
+          this.detonateRobot(r);
+        }
+        this.snapRobotToFloor(r);
+        continue;
+      }
+
+      // Bolt windup
+      if (r.mode === 'windup_bolt') {
+        r.windupT -= dt;
+        r.tickAnim(dt, false, 'windup_bolt');
+        if (r.windupT <= 0) {
+          r.mode = 'chase';
+          r.boltCd = ROBOT.boltCd;
+          this.fireBolt(r, playerFeet);
+        }
+        this.snapRobotToFloor(r);
+        continue;
+      }
+
+      // Start fuse if in melee bubble
+      if (dist < ROBOT.fuseTriggerRange && dist > 0.3) {
+        r.mode = 'fuse';
+        r.fuseT = 0;
+        this.toast('⚠ SELF-DESTRUCT ARMED — back away!');
+        r.tickAnim(dt, false, 'fuse');
+        this.snapRobotToFloor(r);
+        continue;
+      }
+
+      // Start bolt windup on cooldown when mid range
+      if (r.boltCd <= 0 && dist > 2.5 && dist < 14) {
+        r.mode = 'windup_bolt';
+        r.windupT = ROBOT.boltWindup;
+        r.tickAnim(dt, false, 'windup_bolt');
+        this.snapRobotToFloor(r);
+        continue;
+      }
+
+      // Chase (slow)
+      let moving = false;
+      if (dist < 18 && dist > ROBOT.fuseTriggerRange + 0.15) {
+        const dir = playerFeet.clone().sub(r.position);
+        dir.y = 0;
+        if (dir.lengthSq() > 0.01) {
+          dir.normalize();
+          r.position.addScaledVector(dir, ROBOT.chaseSpeed * dt);
+          moving = true;
+        }
+      }
+      r.mode = 'chase';
+      r.tickAnim(dt, moving, 'chase');
+      this.snapRobotToFloor(r);
     }
 
-    // Pickup orbs from opened crates (title oil/cell)
+    // Pickup orbs
     for (const it of this.interactables) {
       if (it.text !== 'pickup' || it.opened) continue;
       if (it.position.distanceTo(this.camera.position) < 1.4) {
@@ -682,6 +678,166 @@ export class ForgeHeartGame {
         else this.plasma = Math.min(100, this.plasma + 30);
         this.toast(it.title === 'oil' ? 'Machine oil.' : 'Plasma cell.');
       }
+    }
+  }
+
+  private updateAlly(r: RobotUnit, dt: number, playerFeet: THREE.Vector3) {
+    r.mode = 'ally';
+    const dist = r.position.distanceTo(playerFeet);
+    let moving = false;
+    if (dist > 2.2 && dist < 22) {
+      const dir = playerFeet.clone().sub(r.position);
+      dir.y = 0;
+      dir.normalize();
+      r.position.addScaledVector(dir, ROBOT.allySpeed * dt);
+      moving = true;
+    }
+
+    let foe: RobotUnit | null = null;
+    let fd = 6;
+    for (const o of this.robots) {
+      if (o.phase !== 'active') continue;
+      const d = o.position.distanceTo(r.position);
+      if (d < fd) {
+        fd = d;
+        foe = o;
+      }
+    }
+    if (foe && fd < 8 && fd > 1.4) {
+      const dir = foe.position.clone().sub(r.position);
+      dir.y = 0;
+      dir.normalize();
+      r.position.addScaledVector(dir, ROBOT.allySpeed * 0.95 * dt);
+      moving = true;
+      r.mesh.lookAt(foe.position.x, r.position.y, foe.position.z);
+    }
+    if (foe && fd < 1.55 && r.attackCd <= 0) {
+      r.attackCd = 0.9;
+      foe.aggro = true;
+      const res = foe.applyArc(12, 18);
+      if (res === 'disabled') this.toast('Ally knocked a frame out!');
+      else if (res === 'scrambled') this.toast('Ally scrambled a frame!');
+    }
+
+    if (r.repairCd <= 0) {
+      for (const o of this.robots) {
+        if (o === r || o.phase !== 'ally') continue;
+        if (o.position.distanceTo(r.position) < 3.2 && o.hp < o.maxHp) {
+          o.hp = Math.min(o.maxHp, o.hp + 8);
+          r.repairCd = 1.1;
+        }
+      }
+      if (r.position.distanceTo(playerFeet) < 3.2 && this.health < 100) {
+        this.health = Math.min(100, this.health + 5);
+        r.repairCd = 1.1;
+      }
+    }
+    r.tickAnim(dt, moving, 'ally');
+  }
+
+  private fireBolt(r: RobotUnit, target: THREE.Vector3) {
+    const dir = target.clone().sub(r.position);
+    dir.y = 0.2;
+    if (dir.lengthSq() < 0.01) dir.set(0, 0, 1);
+    dir.normalize();
+    const bolt = new SparkBolt(r.position.clone(), dir);
+    this.bolts.push(bolt);
+    this.scene.add(bolt.mesh);
+  }
+
+  private updateBolts(dt: number) {
+    const target = this.camera.position.clone();
+    const alive: SparkBolt[] = [];
+    for (const b of this.bolts) {
+      const ok = b.update(dt, target);
+      if (!ok) {
+        this.scene.remove(b.mesh);
+        b.mesh.geometry.dispose();
+        (b.mesh.material as THREE.Material).dispose();
+        continue;
+      }
+      // Hit player
+      if (b.mesh.position.distanceTo(this.camera.position) < 0.7 && this.invuln <= 0) {
+        this.hurtPlayer(b.damage);
+        this.scene.remove(b.mesh);
+        b.mesh.geometry.dispose();
+        (b.mesh.material as THREE.Material).dispose();
+        this.toast('Spark bolt hit!');
+        continue;
+      }
+      // Hit wall roughly (out of map bounds / below ground)
+      if (b.mesh.position.y < -1 || b.mesh.position.y > 12) {
+        this.scene.remove(b.mesh);
+        continue;
+      }
+      alive.push(b);
+    }
+    this.bolts = alive;
+  }
+
+  private detonateRobot(r: RobotUnit) {
+    const pos = r.position.clone();
+    const blast = createBlastFx(pos);
+    this.blasts.push(blast);
+    this.scene.add(blast);
+
+    const dist = pos.distanceTo(this.camera.position);
+    if (dist < ROBOT.blastRadius && this.invuln <= 0) {
+      const falloff = 1 - dist / ROBOT.blastRadius;
+      this.hurtPlayer(ROBOT.blastDamage * (0.45 + 0.55 * falloff));
+      this.toast('Self-destruct blast!');
+    }
+    // Splash damage to nearby hostiles
+    for (const o of this.robots) {
+      if (o === r || o.phase !== 'active') continue;
+      if (o.position.distanceTo(pos) < ROBOT.blastRadius) {
+        o.applyArc(35, 40);
+      }
+    }
+
+    // Detonation destroys the frame as husk with reduced scrap (no player scrap)
+    r.setPhase('husk');
+    const husk = createHusk(this.level.mats, pos);
+    this.scene.add(husk);
+    this.husks.push(husk);
+    this.scene.remove(r.mesh);
+    this.flash('Frame detonated');
+  }
+
+  private updateBlasts(dt: number) {
+    const keep: THREE.Group[] = [];
+    for (const b of this.blasts) {
+      b.userData.life -= dt;
+      const life = b.userData.life as number;
+      const max = b.userData.maxLife as number;
+      const t = 1 - life / max;
+      const scale = 0.5 + t * ROBOT.blastRadius * 2.2;
+      b.scale.setScalar(scale);
+      const sphere = b.children[0] as THREE.Mesh;
+      if (sphere?.material) {
+        const m = sphere.material as THREE.MeshBasicMaterial;
+        m.opacity = Math.max(0, 0.9 * (1 - t));
+      }
+      if (life > 0) keep.push(b);
+      else this.scene.remove(b);
+    }
+    this.blasts = keep;
+  }
+
+  private hurtPlayer(amount: number) {
+    if (this.invuln > 0) return;
+    this.health -= amount;
+    this.invuln = 0.55;
+    if (this.health <= 0) {
+      this.health = 100;
+      this.camera.position.set(
+        this.level.spawn.x,
+        this.level.spawn.y + PLAYER_H * 0.9 + 0.2,
+        this.level.spawn.z,
+      );
+      this.safePos.copy(this.camera.position);
+      this.velocity.set(0, 0, 0);
+      this.toast('Integrity failed — returned to annex door.');
     }
   }
 
