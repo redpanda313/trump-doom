@@ -38,10 +38,25 @@ export const ROBOT = {
   allyIdleMax: 4.0,
   /** Max simultaneous powered allies */
   maxAllies: 3,
-  /** Plasma drain per ally per second */
-  allyPowerDrain: 3.2,
+  /**
+   * Plasma drain per *current live* ally per second.
+   * Always re-counted each tick — never cached from peak ally count.
+   */
+  allyPowerDrain: 2.2,
+  /** Base plasma regen when no allies */
+  plasmaRegenBase: 7.5,
+  /** Regen penalty per powered ally (1 ally = mild surplus, 3 = net drain) */
+  plasmaRegenPerAlly: 1.15,
   /** Seconds at 0 plasma before an ally risks going rogue */
   allyStarveTime: 2.8,
+  /** Vertical motion — step short risers, jump half-walls / stairs */
+  robotGravity: 28,
+  /** Jump clears ~1.55u (half-wall platforms + small courtyard walls) */
+  robotJumpVel: Math.sqrt(2 * 28 * 1.55),
+  robotStepHeight: 0.65,
+  robotJumpCooldown: 0.4,
+  /** Max climbable ledge via jump (slightly above JUMP_H for margin) */
+  robotMaxClimb: 1.85,
   /** Soft separation radius (don't clump) */
   separateRadius: 1.35,
   separateStrength: 2.8,
@@ -94,6 +109,10 @@ export class RobotUnit {
   returning = false;
   /** Body radius for wall collision */
   radius = 0.38;
+  /** Vertical velocity for jumps / steps */
+  vy = 0;
+  onGround = true;
+  jumpCd = 0;
 
   private body: THREE.Group;
   private legL: THREE.Mesh;
@@ -179,11 +198,16 @@ export class RobotUnit {
       this.scramble = 0;
       this.scrambled = false;
       this.fuseT = 0;
+      this.mesh.visible = true;
     } else if (p === 'husk') {
+      // No longer a powered ally — visible/parent cleared so drain drops immediately
       this.mesh.visible = false;
+      this.mode = 'disabled';
     } else {
+      // active / rogue — explicitly not ally
       this.body.rotation.x = 0;
       this.setEyes(this.scrambled ? 'off' : 'hostile');
+      this.mesh.visible = true;
     }
   }
 

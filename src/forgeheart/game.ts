@@ -206,7 +206,6 @@ export class ForgeHeartGame {
     this.msgT -= dt;
     this.atkCd = Math.max(0, this.atkCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
-    this.plasma = Math.min(100, this.plasma + dt * 6);
     this.tickAllyPower(dt);
 
     // Movement relative to camera yaw
@@ -248,10 +247,19 @@ export class ForgeHeartGame {
     const pct = document.getElementById('resolve-pct');
     if (pct) pct.textContent = String(Math.round(this.health));
     this.weaponEl.textContent = this.weapon === 'hand' ? 'REPROGRAM HAND' : 'ARC WRENCH';
-    const allies = this.robots.filter((r) => r.phase === 'ally').length;
-    const dis = this.robots.filter((r) => r.phase === 'disabled').length;
+    const allies = this.countPoweredAllies();
+    const dis = this.robots.filter((r) => r.phase === 'disabled' && r.mesh.visible).length;
     const cap = ROBOT.maxAllies;
-    const powerWarn = allies > 0 && this.plasma < 15 ? ' · ⚠ POWER' : '';
+    const net =
+      ROBOT.plasmaRegenBase -
+      allies * ROBOT.plasmaRegenPerAlly -
+      allies * ROBOT.allyPowerDrain;
+    const powerWarn =
+      allies > 0 && this.plasma < 15
+        ? ' · ⚠ POWER'
+        : allies > 0
+          ? ` · PWR ${net >= 0 ? '+' : ''}${net.toFixed(1)}/s`
+          : '';
     this.statsEl.textContent = `BRASS ${this.brass} · GEARS ${this.gears} · ALLIES ${allies}/${cap} · DOWN ${dis}${powerWarn}${this.onGround ? '' : ' · AIR'}`;
     if (this.locEl) this.locEl.textContent = 'Foundry Annex · ForgeHeart';
 
@@ -458,7 +466,7 @@ export class ForgeHeartGame {
         }
       }
       if (best) {
-        const allyCount = this.robots.filter((x) => x.phase === 'ally').length;
+        const allyCount = this.countPoweredAllies();
         if (allyCount >= ROBOT.maxAllies) {
           this.toast(`Power grid full — only ${ROBOT.maxAllies} allies. Scrap or lose one first.`);
           return;
@@ -470,33 +478,73 @@ export class ForgeHeartGame {
         this.plasma -= 22;
         best.setPhase('ally');
         best.returning = false;
-        this.flash(`REPROGRAMMED — ${allyCount + 1}/${ROBOT.maxAllies} powered (drains plasma)`);
+        best.vy = 0;
+        this.flash(`REPROGRAMMED — ${allyCount + 1}/${ROBOT.maxAllies} powered`);
       } else {
         this.toast('Need scramble-full (dark eyes) or knocked-out frame nearby.');
       }
     }
   }
 
-  /** Drain plasma to power allies; starvation can turn them rogue. */
+  /**
+   * Live powered allies only — re-scanned every call.
+   * Excludes husks, invisible meshes, and units removed from the scene
+   * so drain never sticks at a peak (e.g. 3→1) ally count.
+   */
+  private countPoweredAllies(): number {
+    let n = 0;
+    for (const r of this.robots) {
+      if (this.isPoweredAlly(r)) n++;
+    }
+    return Math.min(n, ROBOT.maxAllies);
+  }
+
+  private isPoweredAlly(r: RobotUnit): boolean {
+    return r.phase === 'ally' && r.mesh.visible && r.mesh.parent != null;
+  }
+
+  private getPoweredAllies(): RobotUnit[] {
+    return this.robots.filter((r) => this.isPoweredAlly(r));
+  }
+
+  /**
+   * Regen + drain from *current* ally count only (never cached).
+   * Net: 0 = strong regen; 1 = mild surplus; 2 ≈ flat; 3 = net drain.
+   */
   private tickAllyPower(dt: number) {
-    const allies = this.robots.filter((r) => r.phase === 'ally');
-    if (allies.length === 0) {
+    // Rescue / drop ghost allies that fell out of the world (would keep draining)
+    for (const r of this.robots) {
+      if (r.phase !== 'ally') continue;
+      if (r.position.y < -2) {
+        r.position.y = 0.05;
+        r.vy = 0;
+        r.onGround = true;
+      }
+    }
+
+    const allies = this.getPoweredAllies();
+    const n = allies.length;
+
+    const regen = Math.max(0, ROBOT.plasmaRegenBase - n * ROBOT.plasmaRegenPerAlly);
+    this.plasma = Math.min(100, this.plasma + regen * dt);
+
+    if (n === 0) {
       this.allyStarveT = 0;
       return;
     }
-    const drain = ROBOT.allyPowerDrain * allies.length * dt;
+
+    // Drain scales strictly with live n — e.g. 3→1 instantly drops to 1× rate
+    const drain = ROBOT.allyPowerDrain * n * dt;
     this.plasma = Math.max(0, this.plasma - drain);
 
     if (this.plasma <= 0.05) {
       this.allyStarveT += dt;
-      // Flicker warning via toast occasionally
       if (Math.floor(this.allyStarveT * 2) !== Math.floor((this.allyStarveT - dt) * 2)) {
         if (this.allyStarveT < ROBOT.allyStarveTime) {
-          this.toast('⚠ Plasma empty — ally links destabilizing…');
+          this.toast(`⚠ Plasma empty — ${n} link${n > 1 ? 's' : ''} destabilizing…`);
         }
       }
-      if (this.allyStarveT >= ROBOT.allyStarveTime && allies.length > 0) {
-        // Furthest ally goes rogue first (dramatic)
+      if (this.allyStarveT >= ROBOT.allyStarveTime) {
         let worst = allies[0]!;
         let bestD = -1;
         const p = this.camera.position;
@@ -508,7 +556,7 @@ export class ForgeHeartGame {
           }
         }
         this.turnAllyRogue(worst);
-        this.allyStarveT = 0; // reset; next loss if still starved
+        this.allyStarveT = 0;
       }
     } else {
       this.allyStarveT = Math.max(0, this.allyStarveT - dt * 1.5);
@@ -516,71 +564,169 @@ export class ForgeHeartGame {
   }
 
   private turnAllyRogue(r: RobotUnit) {
-    r.phase = 'active';
     r.scrambled = false;
     r.scramble = 0;
     r.hp = Math.max(50, r.hp);
     r.maxHp = ROBOT.maxHp;
-    r.setPhase('active');
+    r.vy = 0;
+    r.onGround = true;
+    r.setPhase('active'); // clears ally phase + eyes
     r.mode = 'chase';
     r.returning = false;
     r.fuseT = 0;
     this.flash('LINK SEVERED — a frame turned rogue!');
   }
 
-  /** Move robot in XZ with wall collision; returns actual delta applied. */
+  /**
+   * Move robot in XZ with wall collision + auto step/jump onto ledges.
+   * Returns horizontal delta applied.
+   */
   private moveRobot(r: RobotUnit, wish: THREE.Vector3, speed: number, dt: number): THREE.Vector3 {
     const applied = new THREE.Vector3();
-    if (wish.lengthSq() < 1e-6) return applied;
+    r.jumpCd = Math.max(0, r.jumpCd - dt);
+
+    // Gravity + vertical resolve first
+    r.vy -= ROBOT.robotGravity * dt;
+    r.vy = Math.max(r.vy, -24);
+    r.position.y += r.vy * dt;
+    this.resolveRobotVertical(r);
+
+    if (wish.lengthSq() < 1e-6) {
+      if (r.onGround) this.snapRobotToFloor(r);
+      return applied;
+    }
     const dir = wish.clone().setY(0);
-    if (dir.lengthSq() < 1e-6) return applied;
+    if (dir.lengthSq() < 1e-6) {
+      if (r.onGround) this.snapRobotToFloor(r);
+      return applied;
+    }
     dir.normalize();
 
-    const tryMove = (axis: 'x' | 'z', amount: number) => {
+    const tryAxis = (axis: 'x' | 'z', amount: number): number => {
       if (Math.abs(amount) < 1e-8) return 0;
       const prev = r.position[axis];
       r.position[axis] += amount;
-      const rad = r.radius;
-      const min = new THREE.Vector3(
-        r.position.x - rad,
-        r.position.y + 0.15,
-        r.position.z - rad,
-      );
-      const max = new THREE.Vector3(
-        r.position.x + rad,
-        r.position.y + 1.55,
-        r.position.z + rad,
-      );
-      for (const c of this.colliders) {
-        // Ignore pure floor slabs we're standing on (short boxes under feet)
-        const feet = r.position.y + 0.05;
-        if (c.max.y <= feet + 0.35 && c.min.y < feet) continue;
-        if (!aabbOverlap(min, max, c.min, c.max)) continue;
-        if (axis === 'x') {
-          if (amount > 0) r.position.x = c.min.x - rad - 0.01;
-          else r.position.x = c.max.x + rad + 0.01;
-        } else {
-          if (amount > 0) r.position.z = c.min.z - rad - 0.01;
-          else r.position.z = c.max.z + rad + 0.01;
+      if (this.robotBodyHitsWall(r)) {
+        r.position[axis] = prev;
+        if (r.onGround && r.jumpCd <= 0 && this.tryRobotStepOrJump(r, dir)) {
+          // After step/jump, nudge along wish so we clear the riser
+          const nudge = amount * (r.onGround ? 0.55 : 0.4);
+          r.position[axis] += nudge;
+          if (this.robotBodyHitsWall(r)) r.position[axis] = prev;
         }
-        min.x = r.position.x - rad;
-        max.x = r.position.x + rad;
-        min.z = r.position.z - rad;
-        max.z = r.position.z + rad;
       }
       return r.position[axis] - prev;
     };
 
     const dx = dir.x * speed * dt;
     const dz = dir.z * speed * dt;
-    applied.x = tryMove('x', dx);
-    applied.z = tryMove('z', dz);
+    applied.x = tryAxis('x', dx);
+    applied.z = tryAxis('z', dz);
 
-    // If almost stuck, nudge wander heading
-    if (applied.lengthSq() < (speed * dt * 0.15) ** 2 && wish.lengthSq() > 0.1) {
-      r.wanderAngle += (Math.random() > 0.5 ? 1 : -1) * (0.8 + Math.random() * 1.2);
+    // Blocked + player clearly above → jump to follow stairs / platforms
+    const playerFeetY = this.camera.position.y - PLAYER_H * 0.9;
+    const stuck = applied.lengthSq() < (speed * dt * 0.25) ** 2;
+    if (r.onGround && r.jumpCd <= 0 && wish.lengthSq() > 0.1) {
+      if (stuck && playerFeetY > r.position.y + 0.35) {
+        this.robotJump(r);
+      } else if (stuck) {
+        // Flat obstacle — try climb in move dir before random turn
+        if (!this.tryRobotStepOrJump(r, dir)) {
+          r.wanderAngle += (Math.random() > 0.5 ? 1 : -1) * (0.9 + Math.random());
+        }
+      } else if (playerFeetY > r.position.y + 0.55) {
+        // Moving toward player who is upstairs — hop onto riser if one is ahead
+        this.tryRobotStepOrJump(r, dir);
+      }
     }
+
+    if (r.onGround) this.snapRobotToFloor(r);
     return applied;
+  }
+
+  private robotBodyHitsWall(r: RobotUnit): boolean {
+    const rad = r.radius;
+    const feet = r.position.y;
+    // Body starts slightly above feet so pure floors don't count as walls
+    const min = new THREE.Vector3(r.position.x - rad, feet + 0.18, r.position.z - rad);
+    const max = new THREE.Vector3(r.position.x + rad, feet + 1.45, r.position.z + rad);
+    for (const c of this.colliders) {
+      // Skip surfaces we're standing on (tops at/near feet) — not climbable risers
+      if (c.max.y <= feet + 0.12) continue;
+      if (aabbOverlap(min, max, c.min, c.max)) return true;
+    }
+    return false;
+  }
+
+  private resolveRobotVertical(r: RobotUnit) {
+    const rad = r.radius;
+    const min = new THREE.Vector3(r.position.x - rad, r.position.y - 0.05, r.position.z - rad);
+    const max = new THREE.Vector3(r.position.x + rad, r.position.y + 1.55, r.position.z + rad);
+    let grounded = false;
+    for (const c of this.colliders) {
+      if (!aabbOverlap(min, max, c.min, c.max)) continue;
+      // Land on top when falling / resting
+      if (r.vy <= 0.05 && r.position.y + 0.25 >= c.max.y - 0.2 && r.position.y <= c.max.y + 0.35) {
+        r.position.y = c.max.y;
+        r.vy = 0;
+        grounded = true;
+      } else if (r.vy > 0 && r.position.y + 1.45 > c.min.y && r.position.y + 0.4 < c.min.y) {
+        // Head bump
+        r.position.y = c.min.y - 1.5;
+        r.vy = 0;
+      }
+    }
+    r.onGround = grounded;
+  }
+
+  private robotJump(r: RobotUnit) {
+    r.vy = ROBOT.robotJumpVel;
+    r.onGround = false;
+    r.jumpCd = ROBOT.robotJumpCooldown;
+  }
+
+  /**
+   * Climb short risers (stairs / curbs) or jump half-walls.
+   * Only considers standable tops in a climb window — never ceilings / full walls.
+   */
+  private tryRobotStepOrJump(r: RobotUnit, dir: THREE.Vector3): boolean {
+    const probeDist = r.radius + 0.4;
+    const samples = [
+      r.position.clone().addScaledVector(dir, probeDist),
+      r.position.clone().addScaledVector(dir, probeDist * 0.55),
+      r.position
+        .clone()
+        .addScaledVector(dir, probeDist)
+        .add(new THREE.Vector3(-dir.z * 0.25, 0, dir.x * 0.25)),
+      r.position
+        .clone()
+        .addScaledVector(dir, probeDist)
+        .add(new THREE.Vector3(dir.z * 0.25, 0, -dir.x * 0.25)),
+    ];
+
+    let bestTop = -Infinity;
+    const feet = r.position.y;
+    for (const ahead of samples) {
+      for (const c of this.colliders) {
+        if (ahead.x < c.min.x || ahead.x > c.max.x || ahead.z < c.min.z || ahead.z > c.max.z) continue;
+        const rise = c.max.y - feet;
+        // Climb window only — skip floors under us and tall walls / ceilings
+        if (rise <= 0.06 || rise > ROBOT.robotMaxClimb) continue;
+        if (c.max.y > bestTop) bestTop = c.max.y;
+      }
+    }
+    if (bestTop === -Infinity) return false;
+
+    const rise = bestTop - feet;
+    if (rise <= ROBOT.robotStepHeight) {
+      r.position.y = bestTop + 0.02;
+      r.vy = 0;
+      r.onGround = true;
+      return true;
+    }
+    // Need a jump to clear
+    this.robotJump(r);
+    return true;
   }
 
   private spawnArcFx() {
@@ -712,13 +858,14 @@ export class ForgeHeartGame {
       if (r.phase === 'disabled') {
         r.mode = 'disabled';
         r.tickAnim(dt, false, 'disabled');
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
       if (r.phase === 'ally') {
         this.updateAlly(r, dt, playerFeet);
-        this.snapRobotToFloor(r);
+        // snap only when grounded — airborne jump/fall handled inside moveRobot
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
@@ -737,7 +884,7 @@ export class ForgeHeartGame {
         } else if (r.fuseT >= ROBOT.fuseDuration) {
           this.detonateRobot(r);
         }
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
@@ -750,7 +897,7 @@ export class ForgeHeartGame {
           r.boltCd = ROBOT.boltCd;
           this.fireBolt(r, playerFeet);
         }
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
@@ -760,7 +907,7 @@ export class ForgeHeartGame {
         r.fuseT = 0;
         this.toast('⚠ SELF-DESTRUCT ARMED — back away!');
         r.tickAnim(dt, false, 'fuse');
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
@@ -769,7 +916,7 @@ export class ForgeHeartGame {
         r.mode = 'windup_bolt';
         r.windupT = ROBOT.boltWindup;
         r.tickAnim(dt, false, 'windup_bolt');
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         continue;
       }
 
@@ -790,12 +937,12 @@ export class ForgeHeartGame {
       }
       if (wish.lengthSq() > 0.01) {
         const applied = this.moveRobot(r, wish, ROBOT.chaseSpeed, dt);
-        moving = applied.lengthSq() > 1e-6;
-        if (moving) this.faceMoveDir(r, applied);
+        moving = applied.lengthSq() > 1e-6 || !r.onGround;
+        if (moving && r.onGround) this.faceMoveDir(r, applied);
       }
       r.mode = 'chase';
       r.tickAnim(dt, moving, 'chase');
-      this.snapRobotToFloor(r);
+      if (r.onGround) this.snapRobotToFloor(r);
     }
 
     // Pickup orbs
@@ -872,7 +1019,7 @@ export class ForgeHeartGame {
       else {
         r.tickAnim(dt, moving, 'ally');
         this.allyCombatAndRepair(r, dt, playerFeet);
-        this.snapRobotToFloor(r);
+        if (r.onGround) this.snapRobotToFloor(r);
         return;
       }
     }
@@ -912,6 +1059,15 @@ export class ForgeHeartGame {
       toward.y = 0;
       if (toward.lengthSq() > 0.01) wish.add(toward.normalize());
       speed = ROBOT.allySpeed;
+      // If player is upstairs and we're close in XZ, bias into stairs/walls to trigger step/jump
+      const horiz = Math.hypot(playerFeet.x - r.position.x, playerFeet.z - r.position.z);
+      if (playerFeet.y > r.position.y + 0.45 && horiz < 6 && r.onGround && r.jumpCd <= 0) {
+        // Prefer world stairs zone near courtyard upper (nudge if player is higher)
+        if (horiz < 1.2) {
+          // Already under player — hop straight up
+          this.robotJump(r);
+        }
+      }
     } else {
       // Autonomous wander
       r.wanderTimer -= dt;
@@ -1096,16 +1252,31 @@ export class ForgeHeartGame {
   }
 
   private snapRobotToFloor(r: RobotUnit) {
-    // Simple: ray down against colliders top surfaces
+    // Never cancel a jump / fall with a snap
+    if (!r.onGround || r.vy > 0.2) {
+      if (!r.onGround) this.resolveRobotVertical(r);
+      return;
+    }
     const x = r.position.x;
     const z = r.position.z;
-    let bestY = 0;
+    const rad = r.radius * 0.65;
+    let bestY = -Infinity;
     for (const c of this.colliders) {
-      if (x >= c.min.x && x <= c.max.x && z >= c.min.z && z <= c.max.z) {
-        if (c.max.y > bestY && c.max.y < r.position.y + 2.5) bestY = c.max.y;
+      if (x + rad < c.min.x || x - rad > c.max.x || z + rad < c.min.z || z - rad > c.max.z) continue;
+      // Standable tops near current feet (not ceilings far above)
+      if (c.max.y <= r.position.y + 0.4 && c.max.y >= r.position.y - 1.4) {
+        if (c.max.y > bestY) bestY = c.max.y;
       }
     }
-    r.position.y = bestY;
+    if (bestY > -Infinity) {
+      r.position.y = bestY;
+      r.vy = 0;
+      r.onGround = true;
+    } else if (r.position.y < -1) {
+      r.position.y = 0;
+      r.vy = 0;
+      r.onGround = true;
+    }
   }
 
   private checkExit() {
