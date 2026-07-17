@@ -110,8 +110,9 @@ export class ForgeHeartGame {
     this.controls = new PointerLockControls(this.camera, canvas);
 
     // Warm lab interior; cooler open sky outside
-    this.scene.background = new THREE.Color(0x6a8aaa);
-    this.scene.fog = new THREE.Fog(0x8a9aaa, 22, 70);
+    // Cool sky haze — far fog so painted backdrops dissolve instead of cutting off hard
+    this.scene.background = new THREE.Color(0x7a92a8);
+    this.scene.fog = new THREE.Fog(0x8a9eb0, 28, 95);
 
     const hemi = new THREE.HemisphereLight(0xffe8c8, 0x3a3028, 0.6);
     this.scene.add(hemi);

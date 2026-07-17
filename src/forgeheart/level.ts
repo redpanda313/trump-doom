@@ -498,60 +498,74 @@ export function buildBrotherWorkshop(): LevelBuilt {
     });
   }
 
-  // Mid-distance solid city masses (readable silhouettes)
-  const cityMat = mats.ironDark;
-  const skyline: [number, number, number, number, number, number][] = [
-    [-16, 3, 18, 4, 6, 4],
-    [-20, 4, 24, 5, 8, 5],
-    [-14, 2.5, 30, 3, 5, 3],
-    [15, 3, 17, 4, 7, 4],
-    [19, 5, 25, 6, 9, 5],
-    [13, 2.2, 32, 3.5, 5, 3.5],
-    [-10, 6, 36, 5, 4, 4],
-    [10, 4, 38, 6, 5, 4],
-    [-24, 3.5, 34, 4, 6, 4],
-    [24, 4, 36, 5, 7, 4],
-  ];
-  for (const [x, y, z, w, h, d] of skyline) {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), cityMat);
-    b.position.set(x, y, z);
-    group.add(b);
-    const bridge = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.min(8, Math.abs(x) * 0.35), 0.18, 0.5),
-      mats.brassDark,
-    );
-    bridge.position.set(x * 0.45, Math.max(1.2, y - h * 0.25), z - 1.5);
-    group.add(bridge);
-  }
+  // ——— Nearby detailed floating city (around workshop + path) ———
+  addCityCluster(group, mats);
 
-  // Painted matte backdrops (loaded async — textures appear when ready)
-  addSkyBackdrop(group, '/forgeheart/sky/city-skyline.jpg', new THREE.Vector3(0, 8, 48), 70, 28, 0);
-  addSkyBackdrop(group, '/forgeheart/sky/floating-homes.jpg', new THREE.Vector3(-38, 7, 28), 48, 24, Math.PI * 0.42);
-  addSkyBackdrop(group, '/forgeheart/sky/capital-horizon.jpg', new THREE.Vector3(38, 7.5, 26), 48, 24, -Math.PI * 0.42);
-  addSkyBackdrop(group, '/forgeheart/sky/cloud-mountains.jpg', new THREE.Vector3(22, 5, 42), 40, 20, -Math.PI * 0.18);
-  // Soft cloud underlay plane (ocean of clouds)
+  // Far painted backdrops — pushed back, soft edge fade into fog
+  addSkyBackdrop(group, '/forgeheart/sky/city-skyline.jpg', new THREE.Vector3(0, 10, 78), 110, 42, 0, 0.72);
+  addSkyBackdrop(
+    group,
+    '/forgeheart/sky/floating-homes.jpg',
+    new THREE.Vector3(-58, 9, 42),
+    72,
+    34,
+    Math.PI * 0.48,
+    0.65,
+  );
+  addSkyBackdrop(
+    group,
+    '/forgeheart/sky/capital-horizon.jpg',
+    new THREE.Vector3(58, 9.5, 40),
+    72,
+    34,
+    -Math.PI * 0.48,
+    0.65,
+  );
+  addSkyBackdrop(
+    group,
+    '/forgeheart/sky/cloud-mountains.jpg',
+    new THREE.Vector3(28, 6, 70),
+    64,
+    30,
+    -Math.PI * 0.12,
+    0.55,
+  );
+  addSkyBackdrop(
+    group,
+    '/forgeheart/sky/cloud-mountains.jpg',
+    new THREE.Vector3(-30, 5.5, 68),
+    60,
+    28,
+    Math.PI * 0.1,
+    0.5,
+  );
+
+  // Soft cloud ocean below (very faded edges)
   {
-    const cloudGeo = new THREE.PlaneGeometry(120, 80);
+    const cloudGeo = new THREE.PlaneGeometry(160, 100);
+    const alpha = makeEdgeFadeAlpha(0.35);
     const cloudMat = new THREE.MeshBasicMaterial({
-      color: 0xd8cfc0,
+      color: 0xc8d0dc,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.7,
       depthWrite: false,
       side: THREE.DoubleSide,
+      alphaMap: alpha,
+      fog: true,
     });
     const cloudSea = new THREE.Mesh(cloudGeo, cloudMat);
     cloudSea.rotation.x = -Math.PI / 2;
-    cloudSea.position.set(0, -6, 30);
+    cloudSea.position.set(0, -8, 40);
+    cloudSea.renderOrder = -2;
     group.add(cloudSea);
-    // texture the sea with mountain/cloud plate when loaded
     const loader = new THREE.TextureLoader();
     loader.load('/forgeheart/sky/cloud-mountains.jpg', (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.repeat.set(2, 1.4);
+      tex.repeat.set(2.2, 1.6);
       cloudMat.map = tex;
       cloudMat.color.set(0xffffff);
-      cloudMat.opacity = 0.85;
+      cloudMat.opacity = 0.75;
       cloudMat.needsUpdate = true;
     });
   }
@@ -576,7 +590,62 @@ export function buildBrotherWorkshop(): LevelBuilt {
   };
 }
 
-/** Distant painted sky-city panel (non-colliding). */
+/**
+ * Soft rectangular alpha mask — white center, transparent edges.
+ * Makes backdrop photos melt into fog instead of hard picture frames.
+ */
+function makeEdgeFadeAlpha(edge = 0.28): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext('2d')!;
+  // Start fully opaque
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  const e = Math.floor(size * edge);
+  // Multiply soft black edges (alphaMap: black = transparent)
+  const fade = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    horizontal: boolean,
+    invert: boolean,
+  ) => {
+    const g = horizontal
+      ? ctx.createLinearGradient(x0, 0, x1, 0)
+      : ctx.createLinearGradient(0, y0, 0, y1);
+    if (invert) {
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(1, 'rgba(0,0,0,1)');
+    } else {
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(255,255,255,1)');
+    }
+    ctx.fillStyle = g;
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillRect(0, 0, size, size);
+  };
+  fade(0, 0, e, 0, true, false); // left
+  fade(size - e, 0, size, 0, true, true); // right
+  fade(0, 0, 0, e, false, false); // top
+  fade(0, size - e, 0, size, false, true); // bottom
+  // Extra radial softness in corners
+  const rg = ctx.createRadialGradient(size / 2, size / 2, size * 0.28, size / 2, size / 2, size * 0.62);
+  rg.addColorStop(0, 'rgba(255,255,255,1)');
+  rg.addColorStop(1, 'rgba(0,0,0,1)');
+  ctx.fillStyle = rg;
+  ctx.fillRect(0, 0, size, size);
+  ctx.globalCompositeOperation = 'source-over';
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** Distant painted sky-city panel with soft edge fade (non-colliding). */
 function addSkyBackdrop(
   group: THREE.Group,
   url: string,
@@ -584,15 +653,19 @@ function addSkyBackdrop(
   width: number,
   height: number,
   rotY: number,
+  opacity = 0.7,
 ) {
   const geo = new THREE.PlaneGeometry(width, height);
+  const alpha = makeEdgeFadeAlpha(0.32);
+  // Tint toward fog so hard photo edges never read as posters
   const mat = new THREE.MeshBasicMaterial({
-    color: 0x8899aa,
+    color: 0xa8b4c4,
     transparent: true,
-    opacity: 0.95,
+    opacity,
     depthWrite: false,
     fog: true,
     side: THREE.DoubleSide,
+    alphaMap: alpha,
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(pos);
@@ -603,9 +676,249 @@ function addSkyBackdrop(
   loader.load(url, (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
     mat.map = tex;
-    mat.color.set(0xffffff);
+    mat.color.set(0xdde6f0); // slight cool haze over photo
     mat.needsUpdate = true;
   });
+}
+
+type BuildingStyle = 'tower' | 'factory' | 'home' | 'capital' | 'stack';
+
+/** Multi-part steampunk building (decorative, no collision). */
+function addBuilding(
+  group: THREE.Group,
+  mats: Mats,
+  x: number,
+  z: number,
+  w: number,
+  h: number,
+  d: number,
+  style: BuildingStyle,
+  yBase = 0,
+) {
+  const bodyMat =
+    style === 'home'
+      ? mats.wood
+      : style === 'capital'
+        ? mats.stone
+        : style === 'factory'
+          ? mats.iron
+          : mats.brassDark;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+  body.position.set(x, yBase + h / 2, z);
+  body.castShadow = true;
+  group.add(body);
+
+  // Floating underside plate
+  const plate = new THREE.Mesh(
+    new THREE.BoxGeometry(w * 1.15, 0.2, d * 1.15),
+    mats.ironDark,
+  );
+  plate.position.set(x, yBase + 0.05, z);
+  group.add(plate);
+
+  // Roof / crown
+  if (style === 'tower' || style === 'capital') {
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(w * 0.85, h * 0.12, d * 0.85),
+      mats.brass,
+    );
+    roof.position.set(x, yBase + h + h * 0.05, z);
+    group.add(roof);
+    const spire = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.18, h * 0.35, 6),
+      mats.copper,
+    );
+    spire.position.set(x, yBase + h + h * 0.28, z);
+    group.add(spire);
+  } else if (style === 'factory' || style === 'stack') {
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 1.05, 0.25, d * 1.05), mats.ironDark);
+    roof.position.set(x, yBase + h + 0.1, z);
+    group.add(roof);
+    // Smokestacks
+    const stacks = style === 'stack' ? 3 : 2;
+    for (let i = 0; i < stacks; i++) {
+      const sx = x + (i - (stacks - 1) / 2) * (w * 0.28);
+      const stack = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.28, h * 0.55, 8),
+        mats.ironDark,
+      );
+      stack.position.set(sx, yBase + h + h * 0.28, z + d * 0.15);
+      group.add(stack);
+      // Soft steam puff
+      const steam = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 6, 6),
+        new THREE.MeshBasicMaterial({
+          color: 0xc8c4bc,
+          transparent: true,
+          opacity: 0.35,
+          depthWrite: false,
+        }),
+      );
+      steam.position.set(sx, yBase + h + h * 0.55, z + d * 0.15);
+      group.add(steam);
+    }
+  } else {
+    // home roof peak
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 1.1, 0.35, d * 1.1), mats.copper);
+    roof.position.set(x, yBase + h + 0.15, z);
+    group.add(roof);
+  }
+
+  // Window lights on long faces
+  const winMat = mats.emissiveAmber;
+  const cols = Math.max(2, Math.floor(w / 0.9));
+  const rows = Math.max(2, Math.floor(h / 1.1));
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (Math.random() < 0.25) continue; // some dark
+      const wx = x - w / 2 + 0.45 + (c / Math.max(1, cols - 1)) * (w - 0.9);
+      const wy = yBase + 0.6 + (r / Math.max(1, rows - 1)) * (h - 1.1);
+      // Front (+Z) and side windows
+      for (const [oz, ox, face] of [
+        [d / 2 + 0.04, 0, 'z'],
+        [0, w / 2 + 0.04, 'x'],
+      ] as const) {
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.35, 0.06), winMat);
+        if (face === 'z') win.position.set(wx, wy, z + oz);
+        else {
+          win.rotation.y = Math.PI / 2;
+          win.position.set(x + ox * (ox > 0 ? 1 : -1), wy, z - d / 2 + 0.45 + (c / Math.max(1, cols - 1)) * (d - 0.9));
+        }
+        // Only place one set carefully
+        if (face === 'z') group.add(win);
+      }
+      // Side windows simpler
+      if (c < Math.max(1, Math.floor(d / 0.9))) {
+        const wz = z - d / 2 + 0.45 + (c / Math.max(1, Math.floor(d / 0.9) - 1 || 1)) * (d - 0.9);
+        const side = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.32, 0.26), winMat);
+        side.position.set(x + w / 2 + 0.03, wy, wz);
+        group.add(side);
+      }
+    }
+  }
+
+  // Pipes / braces
+  if (style === 'factory' || style === 'tower') {
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, h * 0.7, 6), mats.copper);
+    pipe.position.set(x + w / 2 + 0.2, yBase + h * 0.4, z);
+    group.add(pipe);
+  }
+  // Support struts under floating base
+  for (const sx of [-w * 0.35, w * 0.35]) {
+    for (const sz of [-d * 0.35, d * 0.35]) {
+      const strut = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.12, Math.max(0.8, yBase + 1.2), 5),
+        mats.iron,
+      );
+      strut.position.set(x + sx, yBase * 0.5 - 0.2, z + sz);
+      group.add(strut);
+    }
+  }
+}
+
+function addSkyBridge(
+  group: THREE.Group,
+  mats: Mats,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  y: number,
+) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dz);
+  const midX = (x0 + x1) / 2;
+  const midZ = (z0 + z1) / 2;
+  const bridge = new THREE.Mesh(new THREE.BoxGeometry(len, 0.2, 0.7), mats.brassDark);
+  bridge.position.set(midX, y, midZ);
+  bridge.rotation.y = -Math.atan2(dz, dx);
+  group.add(bridge);
+  // Rail
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.35, 0.08), mats.iron);
+  rail.position.set(midX, y + 0.25, midZ);
+  rail.rotation.y = bridge.rotation.y;
+  group.add(rail);
+}
+
+/** Dense steampunk city around the outdoor path and workshop flanks. */
+function addCityCluster(group: THREE.Group, mats: Mats) {
+  // Near workshop flanks (just outside walls)
+  addBuilding(group, mats, -14, 4, 3.2, 5.5, 3.5, 'factory', 0);
+  addBuilding(group, mats, -15.5, 10, 2.8, 4.2, 2.8, 'home', 0.3);
+  addBuilding(group, mats, -13, 15, 3.5, 6.5, 3.2, 'tower', 0);
+  addBuilding(group, mats, 14, 3, 3, 5, 3, 'home', 0.2);
+  addBuilding(group, mats, 15.5, 9, 3.6, 7, 3.4, 'factory', 0);
+  addBuilding(group, mats, 13.5, 15, 2.6, 4.5, 2.8, 'tower', 0.4);
+
+  // Along the dock path sides
+  addBuilding(group, mats, -11, 18, 3, 5, 3, 'stack', 0.1);
+  addBuilding(group, mats, -12.5, 23, 2.5, 4, 2.5, 'home', 0.5);
+  addBuilding(group, mats, -14, 28, 3.8, 6, 3.5, 'factory', 0);
+  addBuilding(group, mats, 11, 19, 2.8, 4.8, 2.8, 'home', 0.2);
+  addBuilding(group, mats, 12.5, 24, 3.4, 6.2, 3.2, 'tower', 0);
+  addBuilding(group, mats, 14, 29, 3, 5.5, 3, 'factory', 0.15);
+
+  // Mid ring — denser skyline
+  addBuilding(group, mats, -20, 16, 4.5, 8, 4, 'capital', 0);
+  addBuilding(group, mats, -22, 26, 3.5, 6.5, 3.5, 'tower', 0.3);
+  addBuilding(group, mats, -18, 34, 4, 7, 4, 'factory', 0);
+  addBuilding(group, mats, 20, 15, 4, 7.5, 4, 'tower', 0);
+  addBuilding(group, mats, 22, 25, 5, 9, 4.5, 'capital', 0);
+  addBuilding(group, mats, 18, 33, 3.5, 6, 3.5, 'stack', 0.2);
+  addBuilding(group, mats, -8, 34, 3, 4.5, 3, 'home', 1.2);
+  addBuilding(group, mats, 8, 35, 3.2, 5, 3, 'home', 0.8);
+  addBuilding(group, mats, 0, 40, 5, 8, 4, 'capital', 0.5);
+  addBuilding(group, mats, -26, 22, 3, 5.5, 3, 'factory', 0.4);
+  addBuilding(group, mats, 26, 21, 3.2, 6, 3.2, 'tower', 0.2);
+  addBuilding(group, mats, -24, 32, 4, 7, 4, 'stack', 0);
+  addBuilding(group, mats, 25, 34, 3.8, 6.5, 3.5, 'factory', 0.1);
+
+  // Sky bridges linking neighbors
+  addSkyBridge(group, mats, -14, 10, -13, 15, 3.2);
+  addSkyBridge(group, mats, 14, 9, 13.5, 15, 3.5);
+  addSkyBridge(group, mats, -11, 18, -12.5, 23, 2.8);
+  addSkyBridge(group, mats, 11, 19, 12.5, 24, 3.0);
+  addSkyBridge(group, mats, -20, 16, -14, 15, 4.0);
+  addSkyBridge(group, mats, 20, 15, 15.5, 15, 4.2);
+  addSkyBridge(group, mats, -14, 28, -18, 34, 3.5);
+  addSkyBridge(group, mats, 14, 29, 18, 33, 3.8);
+  addSkyBridge(group, mats, -8, 34, 0, 40, 4.5);
+  addSkyBridge(group, mats, 8, 35, 0, 40, 4.5);
+
+  // Small hanging platforms / watch posts near path
+  for (const [x, z, y] of [
+    [-7.5, 16, 2.2],
+    [7.5, 17, 2.0],
+    [-8, 26, 2.5],
+    [8.2, 27, 2.3],
+  ] as [number, number, number][]) {
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 2.2), mats.brass);
+    pad.position.set(x, y, z);
+    group.add(pad);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, y + 0.4, 6), mats.iron);
+    pole.position.set(x, y / 2, z);
+    group.add(pole);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), mats.emissiveAmber);
+    lamp.position.set(x, y + 1.1, z);
+    group.add(lamp);
+    const light = new THREE.PointLight(0xff9944, 0.55, 8);
+    light.position.set(x, y + 1.1, z);
+    group.add(light);
+  }
+
+  // Gear decorations on nearby towers
+  for (const [x, y, z, r] of [
+    [-13, 5.5, 15, 0.7],
+    [13.5, 4.8, 15, 0.55],
+    [22, 7, 25, 0.9],
+    [-20, 6, 16, 0.65],
+  ] as [number, number, number, number][]) {
+    const gear = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.15, 12), mats.brass);
+    gear.rotation.x = Math.PI / 2;
+    gear.position.set(x, y, z);
+    group.add(gear);
+  }
 }
 
 /** @deprecated use buildBrotherWorkshop — kept name for any old imports */
