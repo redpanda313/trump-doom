@@ -405,29 +405,45 @@ export function buildBrotherWorkshop(): LevelBuilt {
     group.add(light);
   }
 
-  // ——— Exterior: floating deck beyond door ———
+  // ——— Exterior path: continuous from lab door → deck → walkway → boat ———
+  // Overlapping slabs so nothing can fall between segments.
+  // Lab floor ends ~z=8; door at z=8. Path starts inside the threshold.
   {
-    const f = floorPlane(mats, 'brass', 10, 8, 0, 0, 13);
-    add(f.mesh, f.col);
+    // Door apron (overlaps interior floor past the door sill)
+    const apron = floorPlane(mats, 'brass', 8, 5.5, 0, 0.01, 9.2); // z ≈ 6.45–11.95
+    add(apron.mesh, apron.col);
   }
-  // Railings
-  wall(10, 0.5, 0.15, 0, 0.4, 17, mats.iron);
-  wall(0.15, 0.5, 8, -5, 0.4, 13, mats.iron);
-  wall(0.15, 0.5, 8, 5, 0.4, 13, mats.iron);
+  {
+    // Wide dock deck flush against apron
+    const deck = floorPlane(mats, 'brass', 12, 7, 0, 0, 13.5); // z ≈ 10–17
+    add(deck.mesh, deck.col);
+  }
+  {
+    // Walkway abuts deck (overlap ~1u)
+    const path = floorPlane(mats, 'grate', 4.4, 11, 0, 0, 21); // z ≈ 15.5–26.5
+    add(path.mesh, path.col);
+  }
+  {
+    // Boat platform abuts walkway
+    const dock = floorPlane(mats, 'wood', 7.5, 6.5, 0, 0, 28.5); // z ≈ 25.25–31.75
+    add(dock.mesh, dock.col);
+  }
 
-  // Walkway to boat
-  {
-    const f = floorPlane(mats, 'grate', 3.2, 14, 0, 0, 24);
-    add(f.mesh, f.col);
-  }
-  wall(0.12, 0.45, 14, -1.7, 0.35, 24, mats.iron);
-  wall(0.12, 0.45, 14, 1.7, 0.35, 24, mats.iron);
+  // Low curb rails (keep feet on path without blocking vision)
+  wall(12, 0.45, 0.18, 0, 0.28, 17, mats.iron);
+  wall(0.18, 0.45, 7, -6, 0.28, 13.5, mats.iron);
+  wall(0.18, 0.45, 7, 6, 0.28, 13.5, mats.iron);
+  wall(0.16, 0.4, 11, -2.3, 0.28, 21, mats.iron);
+  wall(0.16, 0.4, 11, 2.3, 0.28, 21, mats.iron);
+  wall(7.5, 0.4, 0.16, 0, 0.28, 31.6, mats.iron);
 
-  // Boat platform
+  // Invisible recovery shelf under the whole outdoor path (slightly wider)
   {
-    const f = floorPlane(mats, 'wood', 6, 5, 0, 0, 33);
-    add(f.mesh, f.col);
+    const shelf = box(mats, mats.stone, 14, 0.5, 28, 0, -0.35, 18);
+    shelf.mesh.visible = false;
+    add(shelf.mesh, shelf.col);
   }
+
   // Boat hull
   const boat = new THREE.Group();
   const hull = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.8, 4.5), mats.woodDark);
@@ -437,24 +453,24 @@ export function buildBrotherWorkshop(): LevelBuilt {
   const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 1.2, 8), mats.iron);
   stack.position.set(0, 2.2, -0.3);
   boat.add(hull, cabin, stack);
-  boat.position.set(0, 0, 33.5);
+  boat.position.set(0, 0, 29);
   group.add(boat);
 
   // Steampunk boat controls
   {
     const panel = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.4), mats.brass);
-    panel.position.set(0, 1.35, 32.2);
+    panel.position.set(0, 1.35, 27.6);
     group.add(panel);
     const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.5, 6), mats.copper);
-    lever.position.set(0.15, 1.7, 32.2);
+    lever.position.set(0.15, 1.7, 27.6);
     group.add(lever);
     const prompt = makePromptSprite();
-    prompt.position.set(0, 2.2, 32.2);
+    prompt.position.set(0, 2.2, 27.6);
     group.add(prompt);
     interactables.push({
       type: 'boat',
       id: 'escape_boat',
-      position: new THREE.Vector3(0, 1.4, 32.2),
+      position: new THREE.Vector3(0, 1.4, 27.6),
       radius: 2.4,
       mesh: panel,
       prompt,
@@ -464,66 +480,114 @@ export function buildBrotherWorkshop(): LevelBuilt {
     });
   }
 
-  // Floating city silhouette (decorative, no collision)
+  // Mid-distance solid city masses (readable silhouettes)
   const cityMat = mats.ironDark;
   const skyline: [number, number, number, number, number, number][] = [
-    [-18, 2, 20, 3, 5, 3],
-    [-22, 3, 28, 4, 7, 4],
-    [16, 2.5, 18, 3.5, 6, 3],
-    [20, 4, 30, 5, 8, 4],
-    [-14, 1.5, 36, 2.5, 4, 2.5],
-    [12, 2, 40, 3, 5, 3],
-    [-8, 5, 45, 4, 3, 4],
-    [8, 3, 48, 6, 4, 3],
+    [-16, 3, 18, 4, 6, 4],
+    [-20, 4, 24, 5, 8, 5],
+    [-14, 2.5, 30, 3, 5, 3],
+    [15, 3, 17, 4, 7, 4],
+    [19, 5, 25, 6, 9, 5],
+    [13, 2.2, 32, 3.5, 5, 3.5],
+    [-10, 6, 36, 5, 4, 4],
+    [10, 4, 38, 6, 5, 4],
+    [-24, 3.5, 34, 4, 6, 4],
+    [24, 4, 36, 5, 7, 4],
   ];
   for (const [x, y, z, w, h, d] of skyline) {
     const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), cityMat);
     b.position.set(x, y, z);
     group.add(b);
-    // little walkway connectors
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(x) * 0.3, 0.15, 0.4), mats.brassDark);
-    bridge.position.set(x * 0.4, y - h * 0.3, z - 2);
+    const bridge = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.min(8, Math.abs(x) * 0.35), 0.18, 0.5),
+      mats.brassDark,
+    );
+    bridge.position.set(x * 0.45, Math.max(1.2, y - h * 0.25), z - 1.5);
     group.add(bridge);
   }
-  // Fog-ish sky discs
-  for (const [x, z] of [
-    [-25, 22],
-    [24, 26],
-    [-20, 42],
-    [18, 44],
-  ] as [number, number][]) {
-    const cloud = new THREE.Mesh(
-      new THREE.SphereGeometry(2.5, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0xc4b8a0, transparent: true, opacity: 0.35 }),
-    );
-    cloud.position.set(x, 8, z);
-    group.add(cloud);
-  }
 
-  // Void safety platforms under walkway (invisible catch)
+  // Painted matte backdrops (loaded async — textures appear when ready)
+  addSkyBackdrop(group, '/forgeheart/sky/city-skyline.jpg', new THREE.Vector3(0, 8, 48), 70, 28, 0);
+  addSkyBackdrop(group, '/forgeheart/sky/floating-homes.jpg', new THREE.Vector3(-38, 7, 28), 48, 24, Math.PI * 0.42);
+  addSkyBackdrop(group, '/forgeheart/sky/capital-horizon.jpg', new THREE.Vector3(38, 7.5, 26), 48, 24, -Math.PI * 0.42);
+  addSkyBackdrop(group, '/forgeheart/sky/cloud-mountains.jpg', new THREE.Vector3(22, 5, 42), 40, 20, -Math.PI * 0.18);
+  // Soft cloud underlay plane (ocean of clouds)
   {
-    const catcher = box(mats, mats.stone, 14, 0.4, 40, 0, -2.5, 18);
-    catcher.mesh.visible = false;
-    add(catcher.mesh, catcher.col);
+    const cloudGeo = new THREE.PlaneGeometry(120, 80);
+    const cloudMat = new THREE.MeshBasicMaterial({
+      color: 0xd8cfc0,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const cloudSea = new THREE.Mesh(cloudGeo, cloudMat);
+    cloudSea.rotation.x = -Math.PI / 2;
+    cloudSea.position.set(0, -6, 30);
+    group.add(cloudSea);
+    // texture the sea with mountain/cloud plate when loaded
+    const loader = new THREE.TextureLoader();
+    loader.load('/forgeheart/sky/cloud-mountains.jpg', (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(2, 1.4);
+      cloudMat.map = tex;
+      cloudMat.color.set(0xffffff);
+      cloudMat.opacity = 0.85;
+      cloudMat.needsUpdate = true;
+    });
   }
 
   return {
     group,
     colliders,
     spawn: new THREE.Vector3(0, 0.1, -5.5),
-    exit: new THREE.Vector3(0, 0.1, 33),
+    exit: new THREE.Vector3(0, 0.1, 28.5),
     interactables,
     mats,
     labDoor: { meshes: doorMeshes, colliders: doorCols },
     anchors: {
       brotherSpot: new THREE.Vector3(0, 0, 1.8),
       doorSpot: new THREE.Vector3(0, 0, 8),
-      enemySpawns: [new THREE.Vector3(-1.2, 0, 10.5), new THREE.Vector3(1.2, 0, 10.5)],
+      // Spawn on solid apron/deck — not over void
+      enemySpawns: [new THREE.Vector3(-1.4, 0.05, 11.2), new THREE.Vector3(1.4, 0.05, 11.2)],
       traySpots,
-      boatSpot: new THREE.Vector3(0, 0, 33),
+      boatSpot: new THREE.Vector3(0, 0, 29),
       wrenchSpot,
     },
   };
+}
+
+/** Distant painted sky-city panel (non-colliding). */
+function addSkyBackdrop(
+  group: THREE.Group,
+  url: string,
+  pos: THREE.Vector3,
+  width: number,
+  height: number,
+  rotY: number,
+) {
+  const geo = new THREE.PlaneGeometry(width, height);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0x8899aa,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    fog: true,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  mesh.rotation.y = rotY;
+  mesh.renderOrder = -1;
+  group.add(mesh);
+  const loader = new THREE.TextureLoader();
+  loader.load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    mat.map = tex;
+    mat.color.set(0xffffff);
+    mat.needsUpdate = true;
+  });
 }
 
 /** @deprecated use buildBrotherWorkshop — kept name for any old imports */

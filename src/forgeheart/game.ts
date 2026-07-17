@@ -224,6 +224,9 @@ export class ForgeHeartGame {
     this.tickAllyPower(dt);
     this.tickTutorial(dt);
     this.updateInteractPrompts();
+    // Wind swells when outside the lab door (z past ~8)
+    const outdoor = Math.max(0, Math.min(1, (this.camera.position.z - 7.5) / 6));
+    this.audio.setWind(outdoor);
 
     // Movement relative to camera yaw
     const forward = new THREE.Vector3();
@@ -1099,6 +1102,13 @@ export class ForgeHeartGame {
 
     for (const r of this.robots) {
       if (r.phase === 'husk') continue;
+      // Rescue frames that slipped into the void (path gaps / chase off edge)
+      if (r.position.y < -0.8) {
+        const rescue = this.level.anchors.doorSpot;
+        r.position.set(rescue.x + (Math.random() - 0.5) * 1.2, 0.08, rescue.z + 2.5);
+        r.vy = 0;
+        r.onGround = true;
+      }
       r.attackCd = Math.max(0, r.attackCd - dt);
       r.boltCd = Math.max(0, r.boltCd - dt);
       r.repairCd = Math.max(0, r.repairCd - dt);

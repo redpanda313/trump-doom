@@ -8,9 +8,14 @@ export class ForgeAudio {
   private master: GainNode | null = null;
   private musicGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
+  private windGain: GainNode | null = null;
+  private windFilter: BiquadFilterNode | null = null;
+  private windSource: AudioBufferSourceNode | null = null;
   private musicTimer: number | null = null;
   private step = 0;
   private tension = 0; // 0 calm lab · 1 siege
+  /** 0 indoor · 1 full outdoor wind */
+  private windAmount = 0;
   enabled = false;
 
   async resume() {
@@ -25,6 +30,15 @@ export class ForgeAudio {
       this.sfxGain = this.ctx.createGain();
       this.sfxGain.gain.value = 0.7;
       this.sfxGain.connect(this.master);
+      this.windGain = this.ctx.createGain();
+      this.windGain.gain.value = 0;
+      this.windFilter = this.ctx.createBiquadFilter();
+      this.windFilter.type = 'bandpass';
+      this.windFilter.frequency.value = 420;
+      this.windFilter.Q.value = 0.7;
+      this.windFilter.connect(this.windGain);
+      this.windGain.connect(this.master);
+      this.startWindLoop();
     }
     if (this.ctx.state === 'suspended') await this.ctx.resume();
     this.enabled = true;
@@ -33,6 +47,48 @@ export class ForgeAudio {
 
   setTension(t: number) {
     this.tension = Math.max(0, Math.min(1, t));
+  }
+
+  /**
+   * Outdoor wind bed. amount 0 = lab silence, 1 = open sky dock.
+   * Call each frame with a smoothed target.
+   */
+  setWind(amount: number) {
+    this.windAmount = Math.max(0, Math.min(1, amount));
+    if (!this.ctx || !this.windGain || !this.windFilter) return;
+    const t = this.ctx.currentTime;
+    const g = 0.0001 + this.windAmount * 0.14;
+    this.windGain.gain.cancelScheduledValues(t);
+    this.windGain.gain.setTargetAtTime(g, t, 0.35);
+    // Brighter, harsher wind when fully outside / under tension
+    const freq = 280 + this.windAmount * 220 + this.tension * 80;
+    this.windFilter.frequency.setTargetAtTime(freq, t, 0.4);
+  }
+
+  private startWindLoop() {
+    if (!this.ctx || !this.windFilter || this.windSource) return;
+    // Long looping noise buffer
+    const sec = 4;
+    const n = Math.floor(this.ctx.sampleRate * sec);
+    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let b0 = 0,
+      b1 = 0,
+      b2 = 0;
+    // Brown-ish noise (softer wind than pure white)
+    for (let i = 0; i < n; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.969 * b2 + white * 0.153852;
+      data[i] = (b0 + b1 + b2 + white * 0.05) * 0.35;
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(this.windFilter);
+    src.start();
+    this.windSource = src;
   }
 
   private ensureMusic() {
