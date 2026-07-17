@@ -1536,7 +1536,7 @@ export class ForgeHeartGame {
       slideHeld,
       this.raceway.ramps,
       this.raceway.rails,
-      this.raceway.whooshPoints,
+      this.raceway.bumpPoints,
     );
 
     if (this.eliasBoard) this.eliasBoard.follow(this.board, dt);

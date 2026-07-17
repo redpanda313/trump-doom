@@ -36,8 +36,10 @@ export interface RacewayBuilt {
   boardYaw: number;
   finishPos: THREE.Vector3;
   checkpoints: RaceCheckpoint[];
-  /** Prop positions for pass-by whoosh + hard bumps */
+  /** Pass-by whoosh (cars, props) — not solid */
   whooshPoints: THREE.Vector3[];
+  /** Solid roadside obstacles only (off the racing line) */
+  bumpPoints: THREE.Vector3[];
   ramps: RaceRamp[];
   rails: RaceRail[];
 }
@@ -121,6 +123,7 @@ export function buildSkyRaceway(): RacewayBuilt {
   const group = new THREE.Group();
   const colliders: Collider[] = [];
   const whooshPoints: THREE.Vector3[] = [];
+  const bumpPoints: THREE.Vector3[] = [];
   const ramps: RaceRamp[] = [];
   const rails: RaceRail[] = [];
   const { path, pathDist, total } = generateRacePath();
@@ -214,7 +217,7 @@ export function buildSkyRaceway(): RacewayBuilt {
 
     // Buildings / trees / props every few segments
     if (i % 3 === 0) {
-      placeRoadsideProps(group, mats, mid, dir, yaw, t, zc, whooshPoints, i);
+      placeRoadsideProps(group, mats, mid, dir, yaw, t, zc, whooshPoints, bumpPoints, i);
     }
 
     // Archways
@@ -326,6 +329,7 @@ export function buildSkyRaceway(): RacewayBuilt {
     finishPos: finish,
     checkpoints,
     whooshPoints,
+    bumpPoints,
     ramps,
     rails,
   };
@@ -416,16 +420,18 @@ function placeRoadsideProps(
   _t: number,
   zc: ReturnType<typeof zoneColor>,
   whoosh: THREE.Vector3[],
+  bumps: THREE.Vector3[],
   seed: number,
 ) {
   const right = new THREE.Vector3(dir.z, 0, -dir.x);
   for (const side of [-1, 1] as const) {
-    const dist = ROAD_W / 2 + SIDE_W + 2.5 + (seed % 5) * 0.4;
+    // Well clear of the 10u roadway so bumps never sit on the racing line
+    const dist = ROAD_W / 2 + SIDE_W + 4.2 + (seed % 5) * 0.35;
     const base = mid.clone().addScaledVector(right, side * dist);
     base.y = mid.y;
 
     if (zc.name === 'park' || seed % 5 === 0) {
-      // Floating tree
+      // Floating tree (whoosh only — soft foliage)
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.25, 0.35, 2.2, 6),
         mats.wood,
@@ -443,15 +449,15 @@ function placeRoadsideProps(
       canopy.position.set(base.x, base.y + 3.2, base.z);
       canopy.scale.y = 0.75;
       group.add(canopy);
-      // Floating island under tree
       const isle = new THREE.Mesh(
         new THREE.CylinderGeometry(1.6, 1.9, 0.5, 8),
         mats.stone,
       );
       isle.position.set(base.x, base.y + 0.2, base.z);
       group.add(isle);
+      whoosh.push(base.clone());
     } else {
-      // Building
+      // Building — solid bump (center well off-road)
       const h = 4 + (seed % 7) * 0.9;
       const w = 2.5 + (seed % 4) * 0.4;
       const body = new THREE.Mesh(
@@ -465,14 +471,12 @@ function placeRoadsideProps(
       body.position.set(base.x, base.y + h / 2 + 0.3, base.z);
       body.castShadow = true;
       group.add(body);
-      // Windows
       const winMat = mats.emissiveAmber;
       for (let row = 0; row < Math.floor(h / 1.2); row++) {
         const win = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.4, 0.08), winMat);
         win.position.set(base.x + side * (w / 2 + 0.04), base.y + 1 + row * 1.2, base.z);
         group.add(win);
       }
-      // Roof accent
       const roof = new THREE.Mesh(
         new THREE.BoxGeometry(w * 1.1, 0.3, w * 1.1),
         mats.brass,
@@ -480,6 +484,7 @@ function placeRoadsideProps(
       roof.position.set(base.x, base.y + h + 0.4, base.z);
       group.add(roof);
       whoosh.push(body.position.clone());
+      bumps.push(body.position.clone());
     }
   }
 }
@@ -593,10 +598,11 @@ function placeVehicle(
   seed: number,
   whoosh: THREE.Vector3[],
 ) {
-  const lane = seed % 2 === 0 ? -2.2 : 2.2;
+  // Park on the shoulder — never on the racing line (was ±2.2 and blocked the board)
+  const lane = (seed % 2 === 0 ? -1 : 1) * (ROAD_W / 2 + SIDE_W * 0.55);
   const right = new THREE.Vector3(dir.z, 0, -dir.x);
   const pos = mid.clone().addScaledVector(right, lane);
-  pos.y = mid.y + 0.9 + Math.sin(seed) * 0.15;
+  pos.y = mid.y + 1.15 + Math.sin(seed) * 0.15;
   const truck = seed % 3 === 0;
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(truck ? 2.2 : 1.6, truck ? 1.4 : 0.9, truck ? 4.5 : 3.2),
@@ -616,6 +622,7 @@ function placeVehicle(
   cabin.position.set(pos.x, pos.y + 0.7, pos.z);
   cabin.rotation.y = yaw;
   group.add(cabin);
+  // Whoosh only — not a hard bump
   whoosh.push(pos.clone());
 }
 

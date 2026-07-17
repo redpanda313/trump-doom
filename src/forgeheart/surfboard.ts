@@ -51,12 +51,16 @@ export const BOARD = {
   camTipAccel: -0.12,
   camTipBrake: 0.14,
   offPathLimit: 32,
-  /** Collision */
-  bumpRadius: 1.35,
-  bumpKeepForward: 0.78, // keep most of pre-hit forward motion
-  bumpPush: 10,
+  /** Collision — buildings off-road only; slide along, never kill progress */
+  bumpRadius: 1.1,
+  bumpKeepForward: 0.94,
   grindSpeedMul: 1.08,
-  grindSnap: 14,
+  grindSnap: 10,
+  /** Must be this close to start a grind (was too sticky) */
+  grindCatch: 1.05,
+  grindHold: 1.85,
+  /** If blocked, keep this fraction of path-forward motion */
+  stuckNudge: 6,
 } as const;
 
 export type BoardSurface = 'air' | 'road' | 'ramp' | 'rail';
@@ -83,9 +87,12 @@ export class Surfboard {
   private bobT = 0;
   private jumpBuffer = 0;
   private grindRail: { a: THREE.Vector3; b: THREE.Vector3 } | null = null;
+  private prevPos = new THREE.Vector3();
+  private stuckT = 0;
 
   constructor(mats: Mats, pos: THREE.Vector3, yaw: number) {
     this.position = pos.clone();
+    this.prevPos.copy(pos);
     this.yaw = yaw;
     this.velYaw = yaw;
     this.mesh = buildBoardMesh(mats);
@@ -188,30 +195,49 @@ export class Surfboard {
       }
     }
 
-    // Grind rails
+    // Grind rails — only catch when very close / already grinding; jump or steer away to leave
     let grinding = false;
     if (this.grindRail || this.onGround || this.vy < 2) {
-      for (const rail of rails) {
+      const candidates = this.grindRail ? [this.grindRail, ...rails] : rails;
+      for (const rail of candidates) {
         const closest = closestPointOnSegment(this.position, rail.a, rail.b);
-        const d = this.position.distanceTo(closest);
-        if (d < 2.2 && this.position.y < closest.y + 2.5 && this.position.y > closest.y - 1.2) {
+        const d = Math.hypot(this.position.x - closest.x, this.position.z - closest.z);
+        const catchR = this.grindRail === rail ? BOARD.grindHold : BOARD.grindCatch;
+        const heightOk =
+          this.position.y < closest.y + 2.2 && this.position.y > closest.y - 0.8;
+        if (d < catchR && heightOk) {
+          // Break free if steering hard away from rail or jumping
+          const railMid = rail.a.clone().add(rail.b).multiplyScalar(0.5);
+          const away = new THREE.Vector3(
+            this.position.x - railMid.x,
+            0,
+            this.position.z - railMid.z,
+          );
+          if (away.lengthSq() > 1e-4) away.normalize();
+          const face = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+          const steerAway = away.dot(face) > 0.35 && Math.abs(steer) > 0.55;
+          if (steerAway && this.grindRail === rail) {
+            this.grindRail = null;
+            continue;
+          }
           grinding = true;
           this.surface = 'rail';
           this.grindRail = rail;
           const railDir = rail.b.clone().sub(rail.a);
           if (railDir.lengthSq() > 0.01) {
             railDir.normalize();
-            // Align vel with rail direction (pick closer sense)
-            const face = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
             if (face.dot(railDir) < 0) railDir.negate();
             this.velYaw = Math.atan2(railDir.x, railDir.z);
-            this.yaw = THREE.MathUtils.damp(this.yaw, this.velYaw, 8, dt);
+            this.yaw = dampAngle(this.yaw, this.velYaw, 6, dt);
             this.position.x = THREE.MathUtils.damp(this.position.x, closest.x, BOARD.grindSnap, dt);
             this.position.z = THREE.MathUtils.damp(this.position.z, closest.z, BOARD.grindSnap, dt);
             this.position.y = closest.y + 0.45;
             this.onGround = true;
             this.vy = 0;
-            this.speed = Math.min(BOARD.maxSpeed * 1.05, this.speed * (1 + 0.15 * dt) + 2 * dt);
+            this.speed = Math.min(
+              BOARD.maxSpeed * BOARD.grindSpeedMul,
+              Math.max(this.speed, 8) + 3 * dt,
+            );
           }
           break;
         }
@@ -300,15 +326,35 @@ export class Surfboard {
 
     // Soft path magnet when far (not a hard wall)
     const lateral = new THREE.Vector3(this.position.x - near.point.x, 0, this.position.z - near.point.z);
-    const latLen = lateral.length();
-    if (latLen > 10 && this.onGround) {
-      const pull = Math.min(1, (latLen - 10) / 14);
-      this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 0.9 * pull, dt);
-      this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 0.9 * pull, dt);
+    let latLen = lateral.length();
+    if (latLen > 12 && this.onGround && !grinding) {
+      const pull = Math.min(1, (latLen - 12) / 16);
+      this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 0.7 * pull, dt);
+      this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 0.7 * pull, dt);
     }
 
-    // Hard bumps — keep most forward speed, shove sideways
-    this.resolveBumps(bumps, dt);
+    // Hard bumps (roadside buildings only) — slide along, keep path progress
+    this.resolveBumps(bumps, near.yaw, dt);
+
+    // Anti-stuck: speed high but almost no displacement → shove along the road
+    const moved = this.position.distanceTo(this.prevPos);
+    if (this.speed > 5 && moved < this.speed * dt * 0.12 && this.onGround) {
+      this.stuckT += dt;
+      if (this.stuckT > 0.2) {
+        const pathFwd = new THREE.Vector3(Math.sin(near.yaw), 0, Math.cos(near.yaw));
+        this.position.addScaledVector(pathFwd, BOARD.stuckNudge * dt * this.speed);
+        this.velYaw = near.yaw;
+        this.yaw = dampAngle(this.yaw, near.yaw, 4, dt);
+        this.speed = Math.max(this.speed, 6);
+        this.stuckT = 0;
+      }
+    } else {
+      this.stuckT = Math.max(0, this.stuckT - dt * 2);
+    }
+    this.prevPos.copy(this.position);
+
+    // Recompute lateral after bumps
+    latLen = Math.hypot(this.position.x - near.point.x, this.position.z - near.point.z);
 
     // Void rescue while mounted
     if (this.position.y < -8 || latLen > BOARD.offPathLimit) {
@@ -316,9 +362,10 @@ export class Surfboard {
       this.position.y = near.point.y + BOARD.hoverHeight;
       this.yaw = near.yaw;
       this.velYaw = near.yaw;
-      this.speed *= 0.45;
+      this.speed = Math.max(this.speed * 0.5, 4);
       this.vy = 0;
       this.onGround = true;
+      this.stuckT = 0;
     }
 
     // Visuals
@@ -350,33 +397,46 @@ export class Surfboard {
     this.speed = Math.min(BOARD.maxSpeed, this.speed + boost);
   }
 
-  private resolveBumps(bumps: THREE.Vector3[], _dt: number) {
-    const r = BOARD.bumpRadius;
-    const velDir = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
+  /**
+   * Circle vs building centers. Push out of penetration, then project velocity
+   * so only the into-wall component is removed — path-forward progress remains.
+   */
+  private resolveBumps(bumps: THREE.Vector3[], pathYaw: number, _dt: number) {
+    const r = BOARD.bumpRadius + 1.35;
+    let vx = Math.sin(this.velYaw) * this.speed;
+    let vz = Math.cos(this.velYaw) * this.speed;
+    const pathFwdX = Math.sin(pathYaw);
+    const pathFwdZ = Math.cos(pathYaw);
+
     for (const b of bumps) {
       const dx = this.position.x - b.x;
       const dz = this.position.z - b.z;
       const dist = Math.hypot(dx, dz);
-      const minD = r + 1.6;
-      if (dist >= minD || dist < 1e-4) continue;
-      // Push out along separation
+      if (dist >= r || dist < 1e-5) continue;
+
       const nx = dx / dist;
       const nz = dz / dist;
-      const pen = minD - dist;
+      // Separate
+      const pen = r - dist;
       this.position.x += nx * pen;
       this.position.z += nz * pen;
-      // Keep most forward velocity; cancel into-obstacle component
-      const into = velDir.x * -nx + velDir.z * -nz; // how much vel aims into obstacle
-      if (into > 0) {
-        // Deflect velYaw away from obstacle slightly
-        const deflect = Math.atan2(nx, nz);
-        this.velYaw = dampAngle(this.velYaw, deflect, 12, 0.05);
-        this.speed *= BOARD.bumpKeepForward;
-        // Small outward shove as speed
-        this.speed = Math.max(this.speed, 3);
-      } else {
-        this.speed *= 0.92;
+
+      // Remove velocity into the obstacle (N points from obstacle → player)
+      const into = vx * nx + vz * nz; // negative if moving into obstacle
+      if (into < 0) {
+        vx -= into * nx;
+        vz -= into * nz;
       }
+      // Nudge along path so a wall corner never fully stops you
+      const along = Math.max(0, this.speed * 0.35);
+      vx += pathFwdX * along * 0.15;
+      vz += pathFwdZ * along * 0.15;
+    }
+
+    const sp = Math.hypot(vx, vz);
+    if (sp > 0.05) {
+      this.velYaw = Math.atan2(vx, vz);
+      this.speed = Math.min(BOARD.maxSpeed, Math.max(sp * BOARD.bumpKeepForward, this.speed * 0.85));
     }
   }
 
