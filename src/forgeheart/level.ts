@@ -540,14 +540,14 @@ export function buildBrotherWorkshop(): LevelBuilt {
     0.5,
   );
 
-  // Soft cloud ocean below (very faded edges)
+  // Cloud-only ocean under the docks — unique plate, soft edge blend into void/fog
   {
-    const cloudGeo = new THREE.PlaneGeometry(160, 100);
-    const alpha = makeEdgeFadeAlpha(0.35);
+    const cloudGeo = new THREE.PlaneGeometry(180, 120);
+    const alpha = makeEdgeFadeAlpha(0.42); // wide soft falloff so no hard horizon ring
     const cloudMat = new THREE.MeshBasicMaterial({
-      color: 0xc8d0dc,
+      color: 0xb8c4d0,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.55,
       depthWrite: false,
       side: THREE.DoubleSide,
       alphaMap: alpha,
@@ -555,18 +555,39 @@ export function buildBrotherWorkshop(): LevelBuilt {
     });
     const cloudSea = new THREE.Mesh(cloudGeo, cloudMat);
     cloudSea.rotation.x = -Math.PI / 2;
-    cloudSea.position.set(0, -8, 40);
+    cloudSea.position.set(0, -9, 36);
     cloudSea.renderOrder = -2;
     group.add(cloudSea);
+
+    // Second slightly offset layer for depth / parallax softness
+    const cloudMat2 = cloudMat.clone();
+    cloudMat2.opacity = 0.35;
+    cloudMat2.alphaMap = makeEdgeFadeAlpha(0.5);
+    const cloudSea2 = new THREE.Mesh(new THREE.PlaneGeometry(200, 140), cloudMat2);
+    cloudSea2.rotation.x = -Math.PI / 2;
+    cloudSea2.position.set(6, -11.5, 42);
+    cloudSea2.renderOrder = -3;
+    group.add(cloudSea2);
+
     const loader = new THREE.TextureLoader();
-    loader.load('/forgeheart/sky/cloud-mountains.jpg', (tex) => {
+    loader.load('/forgeheart/sky/cloud-ocean.jpg', (tex) => {
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-      tex.repeat.set(2.2, 1.6);
+      tex.wrapS = tex.wrapT = THREE.MirroredRepeatWrapping;
+      tex.repeat.set(1.6, 1.35);
       cloudMat.map = tex;
-      cloudMat.color.set(0xffffff);
-      cloudMat.opacity = 0.75;
+      cloudMat.color.set(0xe8eef4);
+      cloudMat.opacity = 0.82;
       cloudMat.needsUpdate = true;
+      // Second layer uses a shifted crop of the same cloud plate
+      const tex2 = tex.clone();
+      tex2.wrapS = tex2.wrapT = THREE.MirroredRepeatWrapping;
+      tex2.repeat.set(1.9, 1.5);
+      tex2.offset.set(0.35, 0.2);
+      tex2.needsUpdate = true;
+      cloudMat2.map = tex2;
+      cloudMat2.color.set(0xd0dae6);
+      cloudMat2.opacity = 0.45;
+      cloudMat2.needsUpdate = true;
     });
   }
 
