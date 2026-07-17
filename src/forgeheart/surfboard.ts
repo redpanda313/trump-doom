@@ -117,13 +117,14 @@ export class Surfboard {
     this.mesh = buildBoardMesh(mats);
     this.rider = buildEngineerRider(mats);
     this.rider.position.set(0, 0.18, -0.15);
+    this.rider.visible = false; // only show when boarded in 3rd person
     this.mesh.add(this.rider);
     this.mesh.add(this.sparkGroup);
     this.mesh.position.copy(this.position);
     this.mesh.rotation.y = yaw;
   }
 
-  /** Hide rider body in first-person so the camera isn't inside the mesh */
+  /** Engineer avatar — only visible while mounted in third-person */
   setRiderVisible(v: boolean) {
     this.rider.visible = v;
   }
@@ -152,6 +153,8 @@ export class Surfboard {
     this.slideCharge = 0;
     this.onGround = true;
     this.exitGrind('clear');
+    // Rider visibility is controlled by camera mode in game (default hidden)
+    this.rider.visible = false;
   }
 
   dismount(): THREE.Vector3 {
@@ -163,6 +166,7 @@ export class Surfboard {
     this.speedNorm = 0;
     this.vy = 0;
     this.exitGrind('clear');
+    this.rider.visible = false;
     const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     return this.position.clone().addScaledVector(side, 1.4).add(new THREE.Vector3(0, 0.5, 0));
   }

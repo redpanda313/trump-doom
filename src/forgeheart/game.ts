@@ -289,10 +289,7 @@ export class ForgeHeartGame {
 
   private toggleBoardCamera() {
     this.boardCamMode = this.boardCamMode === 'third' ? 'first' : 'third';
-    if (this.board) {
-      // Hide engineer body in FP so we don't clip inside the mesh
-      this.board.setRiderVisible(this.boardCamMode === 'third');
-    }
+    this.syncBoardRiderVisibility();
     this.toast(
       this.boardCamMode === 'first'
         ? 'Camera: first person (on the board)'
@@ -304,6 +301,12 @@ export class ForgeHeartGame {
         ? 'FP · W/S · A/D · Shift slide · Space jump · Tab 3rd person · E dismount (slow)'
         : '3rd · W/S · A/D · Shift slide · Space jump · Tab 1st person · E dismount (slow)',
     );
+  }
+
+  /** Engineer only when mounted + third-person */
+  private syncBoardRiderVisibility() {
+    if (!this.board) return;
+    this.board.setRiderVisible(this.board.mounted && this.boardCamMode === 'third');
   }
 
   /** Build snapshot for the active slot (named by current level). */
@@ -1424,6 +1427,8 @@ export class ForgeHeartGame {
     this.scene.add(this.raceway.group);
     this.colliders = [...this.raceway.colliders];
     this.board = new Surfboard(this.raceway.mats, this.raceway.boardSpawn, this.raceway.boardYaw);
+    this.board.setRiderVisible(false);
+    this.boardCamMode = 'third';
     this.scene.add(this.board.mesh);
 
     if (this.bringEliasToRace) {
@@ -1603,7 +1608,6 @@ export class ForgeHeartGame {
         .addScaledVector(forward, 4.5)
         .add(new THREE.Vector3(0, 0.85 + this.camPitchOffset * 6, 0));
       this.camera.lookAt(look);
-      this.board.setRiderVisible(false);
     } else {
       const back = forward.clone().multiplyScalar(-1);
       const camDist = 5.2 + sn * 1.4;
@@ -1620,8 +1624,8 @@ export class ForgeHeartGame {
       const look = this.board.position.clone().add(new THREE.Vector3(0, 0.85, 0));
       look.y += this.camPitchOffset * 8;
       this.camera.lookAt(look);
-      this.board.setRiderVisible(true);
     }
+    this.syncBoardRiderVisibility();
 
     this.audio.setBoardAudio(0.2, sn);
     this.audio.setWind(0.25 + sn * 0.75);
@@ -1836,8 +1840,8 @@ export class ForgeHeartGame {
       this.setHelp(
         'W/S · A/D · Shift slide · Space jump · Tab cam · yellow rails grind · E dismount (slow)',
       );
-      this.boardCamMode = 'third';
-      this.board.setRiderVisible(true);
+      // Keep current cam mode; rider only if 3rd person
+      this.syncBoardRiderVisibility();
       this.objective = 'Ride the sky road to the golden finish gate';
       return true;
     }
