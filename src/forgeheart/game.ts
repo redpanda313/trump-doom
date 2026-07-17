@@ -1432,11 +1432,6 @@ export class ForgeHeartGame {
     this.boardCamMode = 'third';
     this.scene.add(this.board.mesh);
 
-    if (this.bringEliasToRace) {
-      const eliasSpawn = this.raceway.boardSpawn.clone().add(new THREE.Vector3(-2.2, 0, -2.5));
-      this.elias = new EliasCompanion(this.scene, this.raceway.mats, eliasSpawn);
-    }
-
     this.scene.background = new THREE.Color(0x6a90b0);
     this.scene.fog = new THREE.Fog(0x8aabcc, 40, 180);
 
@@ -1475,6 +1470,19 @@ export class ForgeHeartGame {
     this.lastCheckpointPos.copy(spawnPath);
     this.lastCheckpointYaw = spawnYaw;
     this.placeBoardAndPlayerAt(spawnPath, spawnYaw, false);
+
+    // Elias after player placement — on foot beside you (visible immediately)
+    if (this.bringEliasToRace) {
+      const side = new THREE.Vector3(Math.cos(spawnYaw), 0, -Math.sin(spawnYaw));
+      const eliasPos = spawnPath
+        .clone()
+        .addScaledVector(side, 2.4)
+        .add(new THREE.Vector3(0, 0, 0));
+      // Path height for feet
+      const eNear = nearestOnPath(this.raceway.path, this.raceway.pathDist, eliasPos);
+      this.elias = new EliasCompanion(this.scene, this.raceway.mats, eNear.point);
+      this.elias.placeOnFootAt(eNear.point);
+    }
 
     this.tutorial = 'race';
     this.won = false;

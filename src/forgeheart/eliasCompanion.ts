@@ -32,6 +32,7 @@ export class EliasCompanion {
     this.robot.setPhase('ally');
     this.robot.hp = 60;
     this.robot.maxHp = 60;
+    this.robot.mesh.visible = true;
     this.scene.add(this.robot.mesh);
 
     this.boardMesh = buildBoardMesh(mats);
@@ -49,6 +50,21 @@ export class EliasCompanion {
     this.boardPos.copy(spawn);
     this.boardMesh.position.copy(spawn);
     this.scene.add(this.boardMesh);
+
+    // Start on foot next to the player (not stuck on a board)
+    this.surfing = false;
+    this.placeOnFootAt(spawn);
+  }
+
+  /** Force Elias on foot at a world position (path-snapped by caller if needed). */
+  placeOnFootAt(worldPos: THREE.Vector3) {
+    this.ensureRobotOnFoot(true);
+    this.robot.mesh.position.copy(worldPos);
+    this.robot.mesh.position.y = worldPos.y;
+    this.robot.mesh.visible = true;
+    this.robot.mesh.scale.setScalar(1);
+    this.robot.mesh.rotation.set(0, 0, 0);
+    this.boardPos.copy(worldPos);
   }
 
   /**
@@ -74,9 +90,10 @@ export class EliasCompanion {
   }
 
   private ensureRobotOnBoard() {
-    if (this.surfing) return;
+    if (this.surfing && this.robot.mesh.parent === this.boardMesh) return;
     this.surfing = true;
     this.boardMesh.visible = true;
+    this.robot.mesh.visible = true;
     // Detach robot from scene world and seat on board
     if (this.robot.mesh.parent) this.robot.mesh.parent.remove(this.robot.mesh);
     this.boardMesh.add(this.robot.mesh);
@@ -87,18 +104,26 @@ export class EliasCompanion {
     this.robot.setPhase('ally');
   }
 
-  private ensureRobotOnFoot() {
-    if (!this.surfing && this.robot.mesh.parent === this.scene) return;
+  private ensureRobotOnFoot(force = false) {
+    if (!force && !this.surfing && this.robot.mesh.parent === this.scene) {
+      this.robot.mesh.visible = true;
+      this.boardMesh.visible = false;
+      return;
+    }
+    // Capture world pos if currently parented to board
+    const world = new THREE.Vector3();
+    if (this.robot.mesh.parent && this.robot.mesh.parent !== this.scene) {
+      this.robot.mesh.getWorldPosition(world);
+    } else {
+      world.copy(this.robot.mesh.position);
+    }
     this.surfing = false;
     this.boardMesh.visible = false;
-    // World position before reparent
-    const world = new THREE.Vector3();
-    this.robot.mesh.getWorldPosition(world);
     if (this.robot.mesh.parent) this.robot.mesh.parent.remove(this.robot.mesh);
     this.robot.mesh.position.copy(world);
-    this.robot.mesh.position.y = world.y; // will snap next
     this.robot.mesh.rotation.set(0, this.boardYaw, 0);
     this.robot.mesh.scale.setScalar(1);
+    this.robot.mesh.visible = true;
     this.scene.add(this.robot.mesh);
     this.robot.setPhase('ally');
   }
@@ -134,39 +159,46 @@ export class EliasCompanion {
     pathDist: number[],
   ) {
     this.ensureRobotOnFoot();
+    this.robot.mesh.visible = true;
 
-    const pos = this.robot.position;
-    const toPlayer = playerPos.clone().sub(pos);
-    toPlayer.y = 0;
+    const pos = this.robot.mesh.position;
+    const toPlayer = new THREE.Vector3(
+      playerPos.x - pos.x,
+      0,
+      playerPos.z - pos.z,
+    );
     const dist = toPlayer.length();
 
     let moving = false;
-    if (dist > 2.2) {
+    if (dist > 2.4) {
       toPlayer.normalize();
-      const speed = dist > 8 ? 7.5 : 5.5;
+      const speed = dist > 10 ? 8.5 : dist > 5 ? 6.5 : 5;
       pos.x += toPlayer.x * speed * dt;
       pos.z += toPlayer.z * speed * dt;
       this.robot.faceDir.copy(toPlayer);
-      const look = pos.clone().add(toPlayer);
-      this.robot.mesh.lookAt(look.x, pos.y, look.z);
+      this.robot.mesh.lookAt(pos.x + toPlayer.x, pos.y, pos.z + toPlayer.z);
       moving = true;
     }
 
-    // Snap to race path height
+    // Snap feet to race path (critical — wrong Y makes him invisible underground)
     const near = nearestOnPath(path, pathDist, pos);
-    const groundY = near.point.y;
-    pos.y = THREE.MathUtils.damp(pos.y, groundY, 10, dt);
-    // Soft keep near path
+    pos.y = near.point.y;
     const lat = Math.hypot(pos.x - near.point.x, pos.z - near.point.z);
-    if (lat > 14) {
-      pos.x = THREE.MathUtils.damp(pos.x, near.point.x, 2, dt);
-      pos.z = THREE.MathUtils.damp(pos.z, near.point.z, 2, dt);
+    if (lat > 12) {
+      pos.x = THREE.MathUtils.damp(pos.x, near.point.x, 3, dt);
+      pos.z = THREE.MathUtils.damp(pos.z, near.point.z, 3, dt);
+      pos.y = nearestOnPath(path, pathDist, pos).point.y;
+    }
+    // If somehow miles away (bad spawn), warp beside player
+    if (dist > 40) {
+      const side = new THREE.Vector3(2.5, 0, 1.5);
+      pos.set(playerPos.x + side.x, playerPos.y, playerPos.z + side.z);
+      const n2 = nearestOnPath(path, pathDist, pos);
+      pos.copy(n2.point);
     }
 
     this.robot.tickAnim(dt, moving, 'ally');
     this.robot.onGround = true;
-
-    // Park his board nearby (hidden)
     this.boardPos.copy(pos);
     this.boardYaw = Math.atan2(this.robot.faceDir.x, this.robot.faceDir.z);
   }
