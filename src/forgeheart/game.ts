@@ -1843,13 +1843,14 @@ export class ForgeHeartGame {
         this.board.position.x - near.point.x,
         this.board.position.z - near.point.z,
       );
+      // Remember cam mode they left surf in (any dismount path)
+      this.persistBoardCamMode();
       if (lat > 9 || this.board.position.y < near.point.y - 2) {
         this.board.dismount();
+        this.syncBoardRiderVisibility();
         this.respawnAtCheckpoint(true);
         return true;
       }
-      // Remember cam mode they left surf in
-      this.persistBoardCamMode();
       this.board.dismount();
       // Stand on path next to board (not floating in void)
       this.placeBoardAndPlayerAt(near.point, this.board.yaw, false);
