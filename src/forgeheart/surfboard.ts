@@ -106,6 +106,8 @@ export class Surfboard {
   private grindCd = 0;
   private sparks: GrindSpark[] = [];
   private sparkGroup = new THREE.Group();
+  /** Steampunk engineer avatar (third-person only) */
+  rider: THREE.Group;
 
   constructor(mats: Mats, pos: THREE.Vector3, yaw: number) {
     this.position = pos.clone();
@@ -113,9 +115,17 @@ export class Surfboard {
     this.yaw = yaw;
     this.velYaw = yaw;
     this.mesh = buildBoardMesh(mats);
+    this.rider = buildEngineerRider(mats);
+    this.rider.position.set(0, 0.18, -0.15);
+    this.mesh.add(this.rider);
     this.mesh.add(this.sparkGroup);
     this.mesh.position.copy(this.position);
     this.mesh.rotation.y = yaw;
+  }
+
+  /** Hide rider body in first-person so the camera isn't inside the mesh */
+  setRiderVisible(v: boolean) {
+    this.rider.visible = v;
   }
 
   get interactPos() {
@@ -761,5 +771,120 @@ export function buildBoardMesh(mats: Mats): THREE.Group {
   );
   pad.position.set(0, 0.1, -0.2);
   g.add(deck, nose, railL, railR, keel, fin, pad);
+  return g;
+}
+
+/**
+ * Low-poly steampunk engineer standing/crouching on the board (3rd person).
+ */
+export function buildEngineerRider(mats: Mats): THREE.Group {
+  const g = new THREE.Group();
+  const coat = new THREE.MeshStandardMaterial({
+    color: 0x4a3828,
+    roughness: 0.75,
+    metalness: 0.15,
+  });
+  const brass = mats.brass;
+  const skin = new THREE.MeshStandardMaterial({ color: 0xc4a882, roughness: 0.85 });
+  const dark = mats.ironDark;
+
+  // Boots on deck
+  const bootL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.28), dark);
+  const bootR = bootL.clone();
+  bootL.position.set(-0.14, 0.08, 0.05);
+  bootR.position.set(0.14, 0.08, 0.05);
+
+  // Legs
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.45, 0.16), coat);
+  const legR = legL.clone();
+  legL.position.set(-0.14, 0.35, 0.02);
+  legR.position.set(0.14, 0.35, 0.02);
+
+  // Torso / long coat
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.55, 0.32), coat);
+  torso.position.set(0, 0.78, 0);
+  torso.castShadow = true;
+  // Coat tails
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.35, 0.12), coat);
+  tail.position.set(0, 0.42, -0.14);
+  tail.rotation.x = 0.25;
+
+  // Brass buckles / straps
+  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.34), brass);
+  strap.position.set(0, 0.7, 0);
+
+  // Arms slightly out for balance
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.42, 0.12), coat);
+  const armR = armL.clone();
+  armL.position.set(-0.34, 0.78, 0.02);
+  armR.position.set(0.34, 0.78, 0.02);
+  armL.rotation.z = 0.35;
+  armR.rotation.z = -0.35;
+
+  // Hands
+  const handL = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), skin);
+  const handR = handL.clone();
+  handL.position.set(-0.42, 0.55, 0.05);
+  handR.position.set(0.42, 0.55, 0.05);
+
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.3, 0.26), skin);
+  head.position.set(0, 1.18, 0.02);
+  head.castShadow = true;
+
+  // Goggles
+  const goggleBand = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.28), dark);
+  goggleBand.position.set(0, 1.22, 0.02);
+  const lensL = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.07, 0.06, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0x66ccff,
+      emissive: 0x2288aa,
+      emissiveIntensity: 0.4,
+      metalness: 0.6,
+      roughness: 0.3,
+    }),
+  );
+  lensL.rotation.x = Math.PI / 2;
+  lensL.position.set(-0.08, 1.22, 0.14);
+  const lensR = lensL.clone();
+  lensR.position.x = 0.08;
+
+  // Top hat / engineer cap with brass band
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.22, 10), dark);
+  hat.position.set(0, 1.42, 0);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.04, 12), dark);
+  brim.position.set(0, 1.32, 0);
+  const hatBand = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.05, 10), brass);
+  hatBand.position.set(0, 1.36, 0);
+
+  // Scarf / neckerchief
+  const scarf = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.12, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0x8b2e2e, roughness: 0.8 }),
+  );
+  scarf.position.set(0, 1.0, 0.05);
+
+  g.add(
+    bootL,
+    bootR,
+    legL,
+    legR,
+    torso,
+    tail,
+    strap,
+    armL,
+    armR,
+    handL,
+    handR,
+    head,
+    goggleBand,
+    lensL,
+    lensR,
+    hat,
+    brim,
+    hatBand,
+    scarf,
+  );
   return g;
 }

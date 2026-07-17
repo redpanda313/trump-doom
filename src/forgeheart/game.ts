@@ -138,6 +138,8 @@ export class ForgeHeartGame {
   private disposed = false;
   /** Prevent respawn spam when race floor was missing */
   private respawnCd = 0;
+  /** Board camera: third-person chase vs first-person on deck */
+  private boardCamMode: 'third' | 'first' = 'third';
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -233,6 +235,11 @@ export class ForgeHeartGame {
         e.preventDefault();
         this.board.requestJump();
       }
+      // Tab: toggle first / third person while on the board
+      if (!wasDown && e.code === 'Tab') {
+        e.preventDefault();
+        if (this.board?.mounted) this.toggleBoardCamera();
+      }
       if (e.code === 'Escape') {
         this.setPaused(!this.paused);
       }
@@ -278,6 +285,25 @@ export class ForgeHeartGame {
 
   private setHelp(t: string) {
     if (this.helpEl) this.helpEl.textContent = t;
+  }
+
+  private toggleBoardCamera() {
+    this.boardCamMode = this.boardCamMode === 'third' ? 'first' : 'third';
+    if (this.board) {
+      // Hide engineer body in FP so we don't clip inside the mesh
+      this.board.setRiderVisible(this.boardCamMode === 'third');
+    }
+    this.toast(
+      this.boardCamMode === 'first'
+        ? 'Camera: first person (on the board)'
+        : 'Camera: third person (chase)',
+      2,
+    );
+    this.setHelp(
+      this.boardCamMode === 'first'
+        ? 'FP · W/S · A/D · Shift slide · Space jump · Tab 3rd person · E dismount (slow)'
+        : '3rd · W/S · A/D · Shift slide · Space jump · Tab 1st person · E dismount (slow)',
+    );
   }
 
   /** Build snapshot for the active slot (named by current level). */
@@ -1546,7 +1572,7 @@ export class ForgeHeartGame {
 
     if (this.eliasBoard) this.eliasBoard.follow(this.board, dt);
 
-    // Chase camera
+    // Camera: FOV + blur always; first person sits on deck, third chases
     const sn = this.board.speedNorm;
     const targetFov = THREE.MathUtils.lerp(BOARD.fovBase, BOARD.fovFast, sn * sn);
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 5, dt);
@@ -1556,23 +1582,46 @@ export class ForgeHeartGame {
       accel > 0.2 ? BOARD.camTipAccel * (0.5 + sn) : accel < -0.2 ? BOARD.camTipBrake : 0;
     this.camPitchOffset = THREE.MathUtils.damp(this.camPitchOffset, tipTarget, 6, dt);
 
-    const back = new THREE.Vector3(-Math.sin(this.board.yaw), 0, -Math.cos(this.board.yaw));
-    const camDist = 5.2 + sn * 1.4;
-    const camHeight = 2.1 + sn * 0.35 + (this.board.onGround ? 0 : 0.4);
-    const ideal = this.board.position
-      .clone()
-      .addScaledVector(back, camDist)
-      .add(new THREE.Vector3(0, camHeight, 0));
-    if (this.board.isPowersliding()) {
-      const right = new THREE.Vector3(Math.cos(this.board.yaw), 0, -Math.sin(this.board.yaw));
-      ideal.addScaledVector(right, this.board.bank * 2.8);
-    }
-    this.camera.position.lerp(ideal, 1 - Math.exp(-8 * dt));
+    const forward = new THREE.Vector3(Math.sin(this.board.yaw), 0, Math.cos(this.board.yaw));
+    const right = new THREE.Vector3(forward.z, 0, -forward.x);
+    // Board-local up from bank
+    const bank = this.board.bank;
+    this.camera.up.set(Math.sin(bank) * 0.55, 1, 0).normalize();
 
-    const look = this.board.position.clone().add(new THREE.Vector3(0, 0.6, 0));
-    look.y += this.camPitchOffset * 8;
-    this.camera.up.set(Math.sin(this.board.bank) * 0.4, 1, 0).normalize();
-    this.camera.lookAt(look);
+    if (this.boardCamMode === 'first') {
+      // On the rear deck, looking forward along the board
+      const ideal = this.board.position
+        .clone()
+        .addScaledVector(forward, -0.35)
+        .add(new THREE.Vector3(0, 1.05 + (this.board.onGround ? 0 : 0.15), 0));
+      // Slight bank sway
+      ideal.addScaledVector(right, bank * 0.12);
+      this.camera.position.lerp(ideal, 1 - Math.exp(-14 * dt));
+
+      const look = this.board.position
+        .clone()
+        .addScaledVector(forward, 4.5)
+        .add(new THREE.Vector3(0, 0.85 + this.camPitchOffset * 6, 0));
+      this.camera.lookAt(look);
+      this.board.setRiderVisible(false);
+    } else {
+      const back = forward.clone().multiplyScalar(-1);
+      const camDist = 5.2 + sn * 1.4;
+      const camHeight = 2.1 + sn * 0.35 + (this.board.onGround ? 0 : 0.4);
+      const ideal = this.board.position
+        .clone()
+        .addScaledVector(back, camDist)
+        .add(new THREE.Vector3(0, camHeight, 0));
+      if (this.board.isPowersliding()) {
+        ideal.addScaledVector(right, this.board.bank * 2.8);
+      }
+      this.camera.position.lerp(ideal, 1 - Math.exp(-8 * dt));
+
+      const look = this.board.position.clone().add(new THREE.Vector3(0, 0.85, 0));
+      look.y += this.camPitchOffset * 8;
+      this.camera.lookAt(look);
+      this.board.setRiderVisible(true);
+    }
 
     this.audio.setBoardAudio(0.2, sn);
     this.audio.setWind(0.25 + sn * 0.75);
@@ -1785,8 +1834,10 @@ export class ForgeHeartGame {
         7,
       );
       this.setHelp(
-        'W/S · A/D bank · Shift slide · Space jump · land on yellow rails to grind · balance A/D · Space leave rail',
+        'W/S · A/D · Shift slide · Space jump · Tab cam · yellow rails grind · E dismount (slow)',
       );
+      this.boardCamMode = 'third';
+      this.board.setRiderVisible(true);
       this.objective = 'Ride the sky road to the golden finish gate';
       return true;
     }
