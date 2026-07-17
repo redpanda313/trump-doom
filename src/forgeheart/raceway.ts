@@ -12,6 +12,17 @@ export interface RaceCheckpoint {
   index: number;
 }
 
+export interface RaceRamp {
+  pos: THREE.Vector3;
+  yaw: number;
+  len: number;
+}
+
+export interface RaceRail {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+}
+
 export interface RacewayBuilt {
   group: THREE.Group;
   colliders: Collider[];
@@ -25,8 +36,10 @@ export interface RacewayBuilt {
   boardYaw: number;
   finishPos: THREE.Vector3;
   checkpoints: RaceCheckpoint[];
-  /** Prop positions for pass-by whoosh (buildings, cars) */
+  /** Prop positions for pass-by whoosh + hard bumps */
   whooshPoints: THREE.Vector3[];
+  ramps: RaceRamp[];
+  rails: RaceRail[];
 }
 
 const ROAD_W = 10;
@@ -108,6 +121,8 @@ export function buildSkyRaceway(): RacewayBuilt {
   const group = new THREE.Group();
   const colliders: Collider[] = [];
   const whooshPoints: THREE.Vector3[] = [];
+  const ramps: RaceRamp[] = [];
+  const rails: RaceRail[] = [];
   const { path, pathDist, total } = generateRacePath();
 
   // Road mats by zone (shared)
@@ -221,6 +236,18 @@ export function buildSkyRaceway(): RacewayBuilt {
     if (i % 9 === 3) {
       placeVehicle(group, mats, mid, dir, yaw, i, whooshPoints);
     }
+
+    // Boost ramps
+    if (i % 42 === 18 && i > 10) {
+      const ramp = placeRamp(group, mats, mid, yaw, zc.accent);
+      ramps.push(ramp);
+    }
+
+    // Grind rails on one side
+    if (i % 31 === 7 && i + 4 < path.length) {
+      const rail = placeRail(group, mats, path[i]!, path[i + 4]!, dir, yaw, zc.side);
+      rails.push(rail);
+    }
   }
 
   // Start plaza
@@ -299,7 +326,85 @@ export function buildSkyRaceway(): RacewayBuilt {
     finishPos: finish,
     checkpoints,
     whooshPoints,
+    ramps,
+    rails,
   };
+}
+
+function placeRamp(
+  group: THREE.Group,
+  _mats: Mats,
+  mid: THREE.Vector3,
+  yaw: number,
+  color: number,
+): RaceRamp {
+  const g = new THREE.Group();
+  const len = 12;
+  // Wedge approximation: stacked slabs rising
+  for (let s = 0; s < 6; s++) {
+    const t = s / 5;
+    const h = 0.35 + t * 3.8;
+    const slab = new THREE.Mesh(
+      new THREE.BoxGeometry(8, h, len / 6 + 0.15),
+      new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.5 }),
+    );
+    slab.position.set(0, h / 2, -len / 2 + (s + 0.5) * (len / 6));
+    g.add(slab);
+  }
+  // Lip glow
+  const lip = new THREE.Mesh(
+    new THREE.BoxGeometry(8.2, 0.2, 0.4),
+    new THREE.MeshStandardMaterial({
+      color: 0x66e0ff,
+      emissive: 0x22aaff,
+      emissiveIntensity: 0.7,
+    }),
+  );
+  lip.position.set(0, 4.1, len / 2 - 0.3);
+  g.add(lip);
+  g.position.copy(mid);
+  g.rotation.y = yaw;
+  group.add(g);
+  return { pos: mid.clone(), yaw, len };
+}
+
+function placeRail(
+  group: THREE.Group,
+  mats: Mats,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  dir: THREE.Vector3,
+  yaw: number,
+  color: number,
+): RaceRail {
+  const right = new THREE.Vector3(dir.z, 0, -dir.x);
+  const side = ROAD_W / 2 + 1.2;
+  const ra = a.clone().addScaledVector(right, side);
+  const rb = b.clone().addScaledVector(right, side);
+  ra.y = a.y + 0.9;
+  rb.y = b.y + 0.9;
+  const mid = ra.clone().add(rb).multiplyScalar(0.5);
+  const len = ra.distanceTo(rb);
+  const rail = new THREE.Mesh(
+    new THREE.BoxGeometry(0.35, 0.25, len),
+    new THREE.MeshStandardMaterial({
+      color: 0xc0d0e0,
+      metalness: 0.85,
+      roughness: 0.25,
+      emissive: color,
+      emissiveIntensity: 0.15,
+    }),
+  );
+  rail.position.copy(mid);
+  rail.rotation.y = yaw;
+  group.add(rail);
+  // Supports
+  for (const p of [ra, rb]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.2, 6), mats.iron);
+    post.position.set(p.x, p.y - 0.5, p.z);
+    group.add(post);
+  }
+  return { a: ra, b: rb };
 }
 
 function placeRoadsideProps(

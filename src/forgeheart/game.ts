@@ -24,7 +24,7 @@ import {
 } from './robot';
 import { ForgeAudio } from './audio';
 import { buildSkyRaceway, nearestOnPath, type RacewayBuilt } from './raceway';
-import { Surfboard, BOARD } from './surfboard';
+import { Surfboard, FollowerBoard, BOARD } from './surfboard';
 
 const GRAVITY = 28;
 const MOVE_SPEED = 7;
@@ -108,12 +108,16 @@ export class ForgeHeartGame {
   // ——— Race / surfboard ———
   private raceway: RacewayBuilt | null = null;
   private board: Surfboard | null = null;
+  private eliasBoard: FollowerBoard | null = null;
   private raceActive = false;
   private raceFinished = false;
   private checkpointIdx = 0;
+  private lastCheckpointPos = new THREE.Vector3();
+  private lastCheckpointYaw = 0;
   private speedBlurEl: HTMLElement | null = null;
   private camPitchOffset = 0;
   private whooshCursor = 0;
+  private bringEliasToRace = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -199,10 +203,10 @@ export class ForgeHeartGame {
         else this.toast('Arc wrench is on the wall rack — claim it when the door fails.');
       }
       if (e.code === 'KeyE') this.tryInteract();
-      // Surfboard double-tap powerslide
-      if (this.board?.mounted && !wasDown) {
-        if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.board.onSteerTap(-1);
-        if (e.code === 'KeyD' || e.code === 'ArrowRight') this.board.onSteerTap(1);
+      // Jump while boarded (Space) — Shift is powerslide
+      if (this.board?.mounted && !wasDown && (e.code === 'Space' || e.code === 'KeyJ')) {
+        e.preventDefault();
+        this.board.requestJump();
       }
       if (e.code === 'Escape') {
         this.paused = !this.paused;
@@ -212,10 +216,6 @@ export class ForgeHeartGame {
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
-      if (this.board?.mounted) {
-        if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.board.onSteerRelease(-1);
-        if (e.code === 'KeyD' || e.code === 'ArrowRight') this.board.onSteerRelease(1);
-      }
     });
     this.canvas.addEventListener('click', () => {
       if (!this.paused) this.controls.lock();
@@ -305,7 +305,11 @@ export class ForgeHeartGame {
     if (this.raceActive && this.board?.mounted) {
       const sp = Math.round(this.board.speed);
       const max = BOARD.maxSpeed;
-      this.weaponEl.textContent = this.board.isPowersliding() ? 'POWERSLIDE' : 'SKY SURF';
+      let mode = 'SKY SURF';
+      if (this.board.isGrinding()) mode = 'GRIND';
+      else if (this.board.isPowersliding())
+        mode = `SLIDE ${Math.round(this.board.slideCharge * 100)}%`;
+      this.weaponEl.textContent = mode;
       this.statsEl.textContent = `${this.objective} · ${sp}/${max} u/s`;
       if (this.locEl) this.locEl.textContent = 'Sky City · Racetrack';
     } else if (this.raceActive) {
@@ -584,6 +588,7 @@ export class ForgeHeartGame {
   private onAllyCreated() {
     if (this.hadAllyOnce) return;
     this.hadAllyOnce = true;
+    this.bringEliasToRace = true;
     if (this.tutorial === 'explore' || this.tutorial === 'rebuild') {
       this.beginSiege();
     }
@@ -1228,6 +1233,13 @@ export class ForgeHeartGame {
     this.board = new Surfboard(this.raceway.mats, this.raceway.boardSpawn, this.raceway.boardYaw);
     this.scene.add(this.board.mesh);
 
+    if (this.bringEliasToRace) {
+      this.eliasBoard = new FollowerBoard(this.raceway.mats);
+      this.eliasBoard.position.copy(this.raceway.boardSpawn).add(new THREE.Vector3(-2, 0, -3));
+      this.eliasBoard.mesh.position.copy(this.eliasBoard.position);
+      this.scene.add(this.eliasBoard.mesh);
+    }
+
     // Place player near board on start plaza
     const spawn = this.raceway.boardSpawn.clone();
     spawn.x += 2.5;
@@ -1242,14 +1254,20 @@ export class ForgeHeartGame {
     this.raceActive = true;
     this.raceFinished = false;
     this.checkpointIdx = 0;
+    this.lastCheckpointPos.copy(this.raceway.boardSpawn);
+    this.lastCheckpointYaw = this.raceway.boardYaw;
     this.tutorial = 'race';
     this.won = false;
     this.objective = 'Approach the humming surfboard · press E to board';
-    this.setHelp('E board · W accel · S brake · A/D bank · double-tap A/D powerslide · E dismount when slow');
+    this.setHelp(
+      'E board · W accel · S brake · A/D bank · hold Shift slide · Space jump · E dismount (slow)',
+    );
     this.flash('SKY CITY RACETRACK');
     this.toast(
-      'A long living roadway through floating districts. Board the plasma surfboard — ride to the golden finish.',
-      7,
+      this.bringEliasToRace
+        ? 'Elias rides with you. Hold Shift + A/D to powerslide — release for mini-turbo. Space jumps; hit ramps and rails.'
+        : 'Hold Shift + A/D to powerslide (release for boost). Space jump · ramps boost · grind rails.',
+      8,
     );
     this.audio.setWind(0.35);
     this.controls.lock();
@@ -1258,14 +1276,12 @@ export class ForgeHeartGame {
   private tickRace(dt: number) {
     if (!this.raceway || !this.board) return;
 
-    // Idle board bob + hum when nearby
     this.board.tickIdle(dt);
     const nearBoard =
-      !this.board.mounted &&
-      this.camera.position.distanceTo(this.board.position) < 8;
+      !this.board.mounted && this.camera.position.distanceTo(this.board.position) < 8;
+
     if (!this.board.mounted) {
       this.audio.setBoardAudio(nearBoard ? 1 : 0.15, 0);
-      // Foot movement near board
       const forward = new THREE.Vector3();
       this.camera.getWorldDirection(forward);
       forward.y = 0;
@@ -1285,8 +1301,19 @@ export class ForgeHeartGame {
         this.onGround = false;
       }
       this.moveWithCollision(dt);
+      // Fell into open sky on foot → checkpoint
+      if (this.camera.position.y < -2) {
+        this.respawnAtCheckpoint(true);
+      }
       this.audio.setWind(0.4);
       this.applySpeedFx(0, 0);
+      if (this.eliasBoard && !this.board.mounted) {
+        // Elias waits near board
+        const wait = this.board.position.clone().add(new THREE.Vector3(-2, 0, -2));
+        this.eliasBoard.position.lerp(wait, 1 - Math.exp(-3 * dt));
+        this.eliasBoard.mesh.position.copy(this.eliasBoard.position);
+        this.eliasBoard.mesh.position.y += 0.1;
+      }
       return;
     }
 
@@ -1297,10 +1324,27 @@ export class ForgeHeartGame {
     let steer = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) steer -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) steer += 1;
+    const slideHeld =
+      this.keys.has('ShiftLeft') ||
+      this.keys.has('ShiftRight') ||
+      this.keys.has('ControlLeft') ||
+      this.keys.has('ControlRight');
 
-    this.board.tick(dt, accel, steer, this.raceway.path, this.raceway.pathDist);
+    this.board.tick(
+      dt,
+      accel,
+      steer,
+      this.raceway.path,
+      this.raceway.pathDist,
+      slideHeld,
+      this.raceway.ramps,
+      this.raceway.rails,
+      this.raceway.whooshPoints,
+    );
 
-    // Chase camera: behind board, banked, FOV rush
+    if (this.eliasBoard) this.eliasBoard.follow(this.board, dt);
+
+    // Chase camera
     const sn = this.board.speedNorm;
     const targetFov = THREE.MathUtils.lerp(BOARD.fovBase, BOARD.fovFast, sn * sn);
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 5, dt);
@@ -1312,42 +1356,39 @@ export class ForgeHeartGame {
 
     const back = new THREE.Vector3(-Math.sin(this.board.yaw), 0, -Math.cos(this.board.yaw));
     const camDist = 5.2 + sn * 1.4;
-    const camHeight = 2.1 + sn * 0.35;
+    const camHeight = 2.1 + sn * 0.35 + (this.board.onGround ? 0 : 0.4);
     const ideal = this.board.position
       .clone()
       .addScaledVector(back, camDist)
       .add(new THREE.Vector3(0, camHeight, 0));
-    // Powerslide: swing camera wider to the slide side
     if (this.board.isPowersliding()) {
       const right = new THREE.Vector3(Math.cos(this.board.yaw), 0, -Math.sin(this.board.yaw));
-      ideal.addScaledVector(right, this.board.bank * 2.2);
+      ideal.addScaledVector(right, this.board.bank * 2.8);
     }
     this.camera.position.lerp(ideal, 1 - Math.exp(-8 * dt));
 
     const look = this.board.position.clone().add(new THREE.Vector3(0, 0.6, 0));
     look.y += this.camPitchOffset * 8;
-    this.camera.up.set(Math.sin(this.board.bank) * 0.35, 1, 0).normalize();
+    this.camera.up.set(Math.sin(this.board.bank) * 0.4, 1, 0).normalize();
     this.camera.lookAt(look);
 
     this.audio.setBoardAudio(0.2, sn);
     this.audio.setWind(0.25 + sn * 0.75);
     this.applySpeedFx(sn, accel);
-
-    // Pass-by whooshes
     this.tickWhooshes(dt);
 
-    // Progress / finish
     const near = nearestOnPath(this.raceway.path, this.raceway.pathDist, this.board.position);
     const pct = Math.min(99, Math.floor((near.dist / this.raceway.totalLength) * 100));
     this.objective = this.raceFinished
       ? 'Racetrack complete!'
       : `Sky road · ${pct}% · CP ${this.checkpointIdx}/${this.raceway.checkpoints.length}`;
 
-    // Checkpoints
     if (!this.raceFinished && this.checkpointIdx < this.raceway.checkpoints.length) {
       const cp = this.raceway.checkpoints[this.checkpointIdx]!;
       if (this.board.position.distanceTo(cp.position) < 18) {
         this.checkpointIdx++;
+        this.lastCheckpointPos.copy(cp.position);
+        this.lastCheckpointYaw = near.yaw;
         this.audio.playPickup();
         if (this.checkpointIdx < this.raceway.checkpoints.length) {
           this.toast(`Checkpoint ${this.checkpointIdx}`, 1.5);
@@ -1360,17 +1401,41 @@ export class ForgeHeartGame {
     }
   }
 
+  private respawnAtCheckpoint(onFoot: boolean) {
+    if (!this.raceway || !this.board) return;
+    const p = this.lastCheckpointPos.clone();
+    p.y += BOARD.hoverHeight;
+    this.board.position.copy(p);
+    this.board.yaw = this.lastCheckpointYaw;
+    this.board.velYaw = this.lastCheckpointYaw;
+    this.board.speed = 0;
+    this.board.vy = 0;
+    this.board.mesh.position.copy(p);
+    if (onFoot || !this.board.mounted) {
+      this.board.mounted = false;
+      this.camera.position.set(p.x + 2, p.y + PLAYER_H * 0.9, p.z);
+      this.safePos.copy(this.camera.position);
+      this.velocity.set(0, 0, 0);
+    } else {
+      this.camera.position.copy(p).add(new THREE.Vector3(0, 2, -5));
+    }
+    this.audio.playBang(0.35);
+    this.toast('Respawned at last checkpoint.', 2);
+  }
+
   private applySpeedFx(speedNorm: number, accel: number) {
     if (!this.speedBlurEl) return;
-    const rush = Math.max(speedNorm, accel > 0 ? speedNorm * 0.5 : 0);
-    if (rush > 0.2) {
+    const rush = Math.max(speedNorm, accel > 0 ? speedNorm * 0.45 : 0);
+    if (rush > 0.22) {
       this.speedBlurEl.classList.remove('hidden');
       this.speedBlurEl.classList.add('active');
-      const blurPx = Math.floor(rush * rush * 10);
-      this.speedBlurEl.style.opacity = String(Math.min(1, rush * 1.1));
+      // Edge-only: opacity scales; blur amount via CSS mask (center stays clear)
+      const blurPx = 6 + Math.floor(rush * rush * 14);
+      this.speedBlurEl.style.opacity = String(Math.min(1, 0.35 + rush * 0.75));
       this.speedBlurEl.style.backdropFilter = `blur(${blurPx}px)`;
-      (this.speedBlurEl.style as CSSStyleDeclaration & { webkitBackdropFilter?: string }).webkitBackdropFilter =
-        `blur(${blurPx}px)`;
+      (
+        this.speedBlurEl.style as CSSStyleDeclaration & { webkitBackdropFilter?: string }
+      ).webkitBackdropFilter = `blur(${blurPx}px)`;
     } else {
       this.speedBlurEl.classList.remove('active');
       this.speedBlurEl.style.opacity = '0';
@@ -1412,9 +1477,20 @@ export class ForgeHeartGame {
   private tryBoardInteract() {
     if (!this.board || !this.raceway) return false;
     if (this.board.mounted) {
-      // Dismount only when slow
       if (this.board.speed > 5) {
         this.toast('Slow down to dismount (S).');
+        return true;
+      }
+      // Over open sky? Respawn checkpoint instead of falling forever
+      const near = nearestOnPath(this.raceway.path, this.raceway.pathDist, this.board.position);
+      const lat = Math.hypot(
+        this.board.position.x - near.point.x,
+        this.board.position.z - near.point.z,
+      );
+      if (lat > 9 || this.board.position.y < near.point.y - 2) {
+        this.board.dismount();
+        this.respawnAtCheckpoint(true);
+        this.toast('Over open sky — returned to checkpoint.', 3);
         return true;
       }
       const pos = this.board.dismount();
@@ -1434,8 +1510,13 @@ export class ForgeHeartGame {
       this.board.mount();
       this.audio.playPickup();
       this.flash('BOARDED — W to soar');
-      this.toast('W accelerate · S slow · A/D bank · double-tap A/D powerslide · release to boost-turn', 6);
-      this.setHelp('W accel · S brake · A/D lean · double-tap A/D powerslide · E dismount (slow)');
+      this.toast(
+        'W accel · S brake · A/D bank · hold Shift+steer to powerslide · release for turbo · Space jump',
+        7,
+      );
+      this.setHelp(
+        'W/S speed · A/D bank · hold Shift slide · Space jump · grind rails · E dismount (slow)',
+      );
       this.objective = 'Ride the sky road to the golden finish gate';
       return true;
     }

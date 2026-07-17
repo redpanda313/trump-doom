@@ -1,5 +1,12 @@
 /**
- * Plasma sky-surfboard — mountable vehicle with lean, boost powerslide, FOV rush.
+ * Plasma sky-surfboard — velocity-based powerslide (hold Shift), jump, grind, bumps.
+ *
+ * Powerslide model (arcade racers / CTR-style):
+ * - Separate *facing* (yaw) from *velocity direction* (momentum).
+ * - Hold drift (Shift) + steer at speed → face turns into the slide while
+ *   velocity keeps most of its previous heading (low lateral grip).
+ * - Slide charge builds while drifting; release → mini-turbo and velocity
+ *   snaps toward facing (exit boost).
  */
 
 import * as THREE from 'three';
@@ -8,52 +15,79 @@ import { nearestOnPath } from './raceway';
 
 export const BOARD = {
   maxSpeed: 22,
-  accel: 14,
+  accel: 15,
   brake: 18,
-  drag: 1.8,
+  drag: 1.6,
   /** Yaw rate rad/s at low speed full bank */
-  turnRateSlow: 2.4,
-  /** Yaw rate at max speed */
-  turnRateFast: 0.75,
-  bankMax: 0.55,
-  bankLerp: 6,
-  powerslideWindow: 0.32,
-  powerslideDuration: 0.55,
-  powerslideBoost: 8,
-  powerslideYawExtra: 1.8,
+  turnRateSlow: 2.5,
+  /** Yaw rate at max speed (normal grip) */
+  turnRateFast: 0.85,
+  /** Extra yaw while powersliding */
+  slideTurnMul: 1.65,
+  bankMax: 0.58,
+  bankLerp: 7,
+  /** Min speed fraction to enter powerslide */
+  slideMinSpeed: 0.28,
+  /** How fast velocity heading follows face when NOT sliding (grip) */
+  gripAlign: 9,
+  /** How fast velocity heading follows face WHILE sliding (low grip) */
+  slideGripAlign: 0.55,
+  /** Lateral drift push while sliding */
+  slideLateral: 0.42,
+  /** Charge seconds for full mini-turbo */
+  slideChargeFull: 1.15,
+  /** Boost impulse on slide release (0..1 charge scale) */
+  slideBoostMin: 3,
+  slideBoostMax: 9,
+  /** Jump */
+  jumpVel: 9.5,
+  gravity: 26,
+  rampBoostJump: 14,
   hoverHeight: 0.55,
   bobAmp: 0.12,
   bobHz: 1.4,
   fovBase: 70,
-  fovFast: 108, // +38° "lens" rush
-  camTipAccel: -0.12, // pitch down when accel (radians offset)
+  fovFast: 108,
+  camTipAccel: -0.12,
   camTipBrake: 0.14,
-  offPathLimit: 28,
+  offPathLimit: 32,
+  /** Collision */
+  bumpRadius: 1.35,
+  bumpKeepForward: 0.78, // keep most of pre-hit forward motion
+  bumpPush: 10,
+  grindSpeedMul: 1.08,
+  grindSnap: 14,
 } as const;
+
+export type BoardSurface = 'air' | 'road' | 'ramp' | 'rail';
 
 export class Surfboard {
   mesh: THREE.Group;
   position: THREE.Vector3;
+  /** Facing direction (nose) */
   yaw = 0;
-  /** Lean / bank angle (visual + turn) */
+  /** Momentum direction (where speed actually goes) */
+  velYaw = 0;
+  /** Lean / bank */
   bank = 0;
   speed = 0;
+  vy = 0;
   mounted = false;
-  /** 0 idle hum … 1 full jet */
   speedNorm = 0;
+  onGround = true;
+  surface: BoardSurface = 'road';
+  /** 0..1 powerslide charge for mini-turbo */
+  slideCharge = 0;
+  sliding = false;
 
   private bobT = 0;
-  private powerslideT = 0;
-  private powerslideDir = 0; // -1 left +1 right
-  private lastLeftT = -9;
-  private lastRightT = -9;
-  private now = 0;
-  private releaseBoost = 0;
-  private releaseBoostDir = 0;
+  private jumpBuffer = 0;
+  private grindRail: { a: THREE.Vector3; b: THREE.Vector3 } | null = null;
 
   constructor(mats: Mats, pos: THREE.Vector3, yaw: number) {
     this.position = pos.clone();
     this.yaw = yaw;
+    this.velYaw = yaw;
     this.mesh = buildBoardMesh(mats);
     this.mesh.position.copy(this.position);
     this.mesh.rotation.y = yaw;
@@ -63,7 +97,6 @@ export class Surfboard {
     return this.position;
   }
 
-  /** Idle float + hum phase when not mounted */
   tickIdle(dt: number) {
     this.bobT += dt;
     if (this.mounted) return;
@@ -76,25 +109,39 @@ export class Surfboard {
 
   mount() {
     this.mounted = true;
-    this.speed = 2;
+    this.speed = 2.5;
+    this.velYaw = this.yaw;
     this.bank = 0;
+    this.vy = 0;
+    this.sliding = false;
+    this.slideCharge = 0;
+    this.onGround = true;
   }
 
   dismount(): THREE.Vector3 {
     this.mounted = false;
     this.speed = 0;
     this.bank = 0;
-    this.powerslideT = 0;
+    this.sliding = false;
+    this.slideCharge = 0;
     this.speedNorm = 0;
-    // Off board to the side
+    this.vy = 0;
+    this.grindRail = null;
     const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     return this.position.clone().addScaledVector(side, 1.4).add(new THREE.Vector3(0, 0.5, 0));
   }
 
+  requestJump() {
+    this.jumpBuffer = 0.15;
+  }
+
   /**
-   * @param accel -1..1 (S/down brake, W/up accel)
-   * @param steer -1..1 held left/right
-   * @param path race path for soft snap
+   * @param accel -1..1
+   * @param steer -1..1
+   * @param slideHeld hold Shift/Ctrl for powerslide
+   * @param ramps ramp segments for boost jumps
+   * @param rails grind rails
+   * @param bumps solid obstacle centers (hard collisions)
    */
   tick(
     dt: number,
@@ -102,125 +149,305 @@ export class Surfboard {
     steer: number,
     path: THREE.Vector3[],
     pathDist: number[],
+    slideHeld: boolean,
+    ramps: { pos: THREE.Vector3; yaw: number; len: number }[],
+    rails: { a: THREE.Vector3; b: THREE.Vector3 }[],
+    bumps: THREE.Vector3[],
   ) {
-    this.now += dt;
     this.bobT += dt;
+    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
 
-    // Powerslide timer
-    if (this.powerslideT > 0) {
-      this.powerslideT = Math.max(0, this.powerslideT - dt);
-    }
-    if (this.releaseBoost > 0) {
-      this.releaseBoost = Math.max(0, this.releaseBoost - dt);
+    const near = nearestOnPath(path, pathDist, this.position);
+    const roadY = near.point.y + BOARD.hoverHeight;
+
+    // ——— Detect ramp / rail surface ———
+    this.surface = 'road';
+    let onRamp = false;
+    let rampPitch = 0;
+    for (const r of ramps) {
+      const local = this.position.clone().sub(r.pos);
+      const forward = new THREE.Vector3(Math.sin(r.yaw), 0, Math.cos(r.yaw));
+      const along = local.dot(forward);
+      const right = new THREE.Vector3(forward.z, 0, -forward.x);
+      const lat = Math.abs(local.dot(right));
+      if (along > -0.5 && along < r.len + 0.5 && lat < 4.5) {
+        onRamp = true;
+        this.surface = 'ramp';
+        // Ramp rises along length
+        const t = THREE.MathUtils.clamp(along / r.len, 0, 1);
+        rampPitch = -0.35; // nose up feel
+        const rampTop = r.pos.y + t * 4.5 + BOARD.hoverHeight;
+        if (this.vy <= 0.5) {
+          this.position.y = Math.max(this.position.y, rampTop);
+          if (this.position.y <= rampTop + 0.35) {
+            this.onGround = true;
+            this.vy = 0;
+          }
+        }
+        break;
+      }
     }
 
-    // Speed
-    if (accel > 0.1) {
+    // Grind rails
+    let grinding = false;
+    if (this.grindRail || this.onGround || this.vy < 2) {
+      for (const rail of rails) {
+        const closest = closestPointOnSegment(this.position, rail.a, rail.b);
+        const d = this.position.distanceTo(closest);
+        if (d < 2.2 && this.position.y < closest.y + 2.5 && this.position.y > closest.y - 1.2) {
+          grinding = true;
+          this.surface = 'rail';
+          this.grindRail = rail;
+          const railDir = rail.b.clone().sub(rail.a);
+          if (railDir.lengthSq() > 0.01) {
+            railDir.normalize();
+            // Align vel with rail direction (pick closer sense)
+            const face = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+            if (face.dot(railDir) < 0) railDir.negate();
+            this.velYaw = Math.atan2(railDir.x, railDir.z);
+            this.yaw = THREE.MathUtils.damp(this.yaw, this.velYaw, 8, dt);
+            this.position.x = THREE.MathUtils.damp(this.position.x, closest.x, BOARD.grindSnap, dt);
+            this.position.z = THREE.MathUtils.damp(this.position.z, closest.z, BOARD.grindSnap, dt);
+            this.position.y = closest.y + 0.45;
+            this.onGround = true;
+            this.vy = 0;
+            this.speed = Math.min(BOARD.maxSpeed * 1.05, this.speed * (1 + 0.15 * dt) + 2 * dt);
+          }
+          break;
+        }
+      }
+    }
+    if (!grinding) this.grindRail = null;
+
+    // ——— Powerslide enter/exit (hold Shift) ———
+    const canSlide = this.speedNorm >= BOARD.slideMinSpeed && this.onGround && !grinding;
+    const wantSlide = slideHeld && canSlide && Math.abs(steer) > 0.15;
+    if (wantSlide) {
+      if (!this.sliding) this.sliding = true;
+      this.slideCharge = Math.min(1, this.slideCharge + dt / BOARD.slideChargeFull);
+    } else if (this.sliding) {
+      // Release → mini-turbo
+      this.endPowerslide();
+    }
+
+    // ——— Speed ———
+    if (grinding) {
+      // rails keep speed up
+      this.speed = Math.min(BOARD.maxSpeed * BOARD.grindSpeedMul, this.speed + 1.5 * dt);
+    } else if (accel > 0.1) {
       this.speed += BOARD.accel * accel * dt;
     } else if (accel < -0.1) {
       this.speed -= BOARD.brake * -accel * dt;
     } else {
-      this.speed -= BOARD.drag * dt;
+      this.speed -= BOARD.drag * dt * (this.sliding ? 0.5 : 1);
     }
-    if (this.releaseBoost > 0) {
-      this.speed += BOARD.powerslideBoost * dt;
-    }
-    this.speed = Math.max(0, Math.min(BOARD.maxSpeed, this.speed));
+    this.speed = Math.max(0, Math.min(BOARD.maxSpeed * (grinding ? BOARD.grindSpeedMul : 1), this.speed));
     this.speedNorm = this.speed / BOARD.maxSpeed;
 
-    // Bank: sharp at low speed, gentle at high
-    const bankTarget = THREE.MathUtils.clamp(steer, -1, 1) * BOARD.bankMax;
-    const bankSpeed = BOARD.bankLerp * (1.15 - this.speedNorm * 0.55);
+    // ——— Bank & yaw (facing) ———
+    const bankTarget = THREE.MathUtils.clamp(steer, -1, 1) * BOARD.bankMax * (this.sliding ? 1.15 : 1);
+    const bankSpeed = BOARD.bankLerp * (1.2 - this.speedNorm * 0.5);
     this.bank = THREE.MathUtils.damp(this.bank, bankTarget, bankSpeed, dt);
 
-    // Turn rate vs speed
-    const turnRate = THREE.MathUtils.lerp(BOARD.turnRateSlow, BOARD.turnRateFast, this.speedNorm);
-    let yawRate = -this.bank * turnRate * 1.8;
+    const turnBase = THREE.MathUtils.lerp(BOARD.turnRateSlow, BOARD.turnRateFast, this.speedNorm);
+    const turnMul = this.sliding ? BOARD.slideTurnMul : 1;
+    this.yaw += -this.bank * turnBase * turnMul * 1.75 * dt;
 
-    if (this.powerslideT > 0) {
-      // Camera/board yaws harder; motion stays mostly forward (applied below)
-      yawRate += -this.powerslideDir * BOARD.powerslideYawExtra * (0.5 + this.speedNorm * 0.5);
+    // ——— Velocity heading vs facing (the core of powerslide) ———
+    const align = this.sliding ? BOARD.slideGripAlign : BOARD.gripAlign;
+    this.velYaw = dampAngle(this.velYaw, this.yaw, align, dt);
+
+    // While sliding, bleed velocity heading slower + add lateral
+    const velFwd = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
+    const faceFwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    const faceRight = new THREE.Vector3(faceFwd.z, 0, -faceFwd.x);
+
+    let move = velFwd.multiplyScalar(this.speed * dt);
+    if (this.sliding) {
+      move.addScaledVector(faceRight, -Math.sign(this.bank || steer || 0.001) * this.speed * BOARD.slideLateral * dt);
     }
-    if (this.releaseBoost > 0) {
-      yawRate += -this.releaseBoostDir * 2.6 * (this.releaseBoost / 0.35);
+
+    // Jump
+    if (this.jumpBuffer > 0 && this.onGround) {
+      this.jumpBuffer = 0;
+      const rampBoost = onRamp && this.speedNorm > 0.4;
+      this.vy = rampBoost ? BOARD.rampBoostJump : BOARD.jumpVel;
+      this.onGround = false;
+      this.surface = 'air';
+      this.sliding = false;
+      if (rampBoost) {
+        this.speed = Math.min(BOARD.maxSpeed, this.speed + 4);
+      }
     }
 
-    this.yaw += yawRate * dt;
-
-    // Movement — mostly forward; powerslide adds slight lateral drift
-    const forward = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    const right = new THREE.Vector3(forward.z, 0, -forward.x);
-    const move = forward.clone().multiplyScalar(this.speed * dt);
-    if (this.powerslideT > 0) {
-      move.addScaledVector(right, -this.powerslideDir * this.speed * 0.25 * dt);
-      // Keep more of pre-slide forward: blend yaw already turned board
+    // Vertical
+    if (!this.onGround || this.surface === 'air') {
+      this.vy -= BOARD.gravity * dt;
+      this.position.y += this.vy * dt;
+      if (this.position.y <= roadY && this.vy <= 0 && !onRamp) {
+        this.position.y = roadY;
+        this.vy = 0;
+        this.onGround = true;
+        this.surface = 'road';
+      }
+    } else if (!onRamp && !grinding) {
+      this.position.y = THREE.MathUtils.damp(this.position.y, roadY, 8, dt);
+      this.vy = 0;
     }
-    this.position.add(move);
 
-    // Soft height follow path + bob
-    const near = nearestOnPath(path, pathDist, this.position);
-    const targetY = near.point.y + BOARD.hoverHeight;
-    this.position.y = THREE.MathUtils.damp(this.position.y, targetY, 4, dt);
-    // Pull gently toward road if far off
+    this.position.x += move.x;
+    this.position.z += move.z;
+
+    // Soft path magnet when far (not a hard wall)
     const lateral = new THREE.Vector3(this.position.x - near.point.x, 0, this.position.z - near.point.z);
     const latLen = lateral.length();
-    if (latLen > 6) {
-      const pull = Math.min(1, (latLen - 6) / 12);
-      this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 1.2 * pull, dt);
-      this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 1.2 * pull, dt);
-    }
-    // Respawn snap if way off
-    if (latLen > BOARD.offPathLimit || this.position.y < -5) {
-      this.position.copy(near.point);
-      this.position.y += BOARD.hoverHeight;
-      this.yaw = near.yaw;
-      this.speed *= 0.4;
+    if (latLen > 10 && this.onGround) {
+      const pull = Math.min(1, (latLen - 10) / 14);
+      this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 0.9 * pull, dt);
+      this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 0.9 * pull, dt);
     }
 
-    const bob = Math.sin(this.bobT * BOARD.bobHz * Math.PI * 2) * BOARD.bobAmp * (0.4 + this.speedNorm * 0.3);
+    // Hard bumps — keep most forward speed, shove sideways
+    this.resolveBumps(bumps, dt);
+
+    // Void rescue while mounted
+    if (this.position.y < -8 || latLen > BOARD.offPathLimit) {
+      this.position.copy(near.point);
+      this.position.y = near.point.y + BOARD.hoverHeight;
+      this.yaw = near.yaw;
+      this.velYaw = near.yaw;
+      this.speed *= 0.45;
+      this.vy = 0;
+      this.onGround = true;
+    }
+
+    // Visuals
+    const bob =
+      Math.sin(this.bobT * BOARD.bobHz * Math.PI * 2) *
+      BOARD.bobAmp *
+      (this.onGround ? 0.35 + this.speedNorm * 0.25 : 0);
     this.mesh.position.set(this.position.x, this.position.y + bob, this.position.z);
     this.mesh.rotation.order = 'YXZ';
     this.mesh.rotation.y = this.yaw;
-    this.mesh.rotation.z = this.bank;
-    this.mesh.rotation.x = -this.speedNorm * 0.08 + (accel > 0 ? -0.05 : accel < 0 ? 0.06 : 0);
+    // Bank shows slide more aggressively
+    const slideKick = this.sliding ? -Math.sign(steer || this.bank || 1) * 0.2 : 0;
+    this.mesh.rotation.z = this.bank + slideKick;
+    this.mesh.rotation.x =
+      -this.speedNorm * 0.08 +
+      (accel > 0 ? -0.05 : accel < 0 ? 0.06 : 0) +
+      rampPitch +
+      (this.onGround ? 0 : -0.12);
   }
 
-  /** Double-tap left/right → powerslide; call on keydown */
-  onSteerTap(dir: -1 | 1) {
-    const t = this.now;
-    if (dir < 0) {
-      if (t - this.lastLeftT < BOARD.powerslideWindow) {
-        this.powerslideT = BOARD.powerslideDuration;
-        this.powerslideDir = -1;
-      }
-      this.lastLeftT = t;
-    } else {
-      if (t - this.lastRightT < BOARD.powerslideWindow) {
-        this.powerslideT = BOARD.powerslideDuration;
-        this.powerslideDir = 1;
-      }
-      this.lastRightT = t;
-    }
+  private endPowerslide() {
+    if (!this.sliding) return;
+    const charge = this.slideCharge;
+    this.sliding = false;
+    this.slideCharge = 0;
+    // Snap momentum toward face + boost
+    this.velYaw = this.yaw;
+    const boost = THREE.MathUtils.lerp(BOARD.slideBoostMin, BOARD.slideBoostMax, charge);
+    this.speed = Math.min(BOARD.maxSpeed, this.speed + boost);
   }
 
-  /** Release left/right after powerslide → boost curve */
-  onSteerRelease(dir: -1 | 1) {
-    if (this.powerslideT > 0 && this.powerslideDir === dir) {
-      this.releaseBoost = 0.35;
-      this.releaseBoostDir = dir;
-      this.powerslideT = 0;
-      this.speed = Math.min(BOARD.maxSpeed, this.speed + 4);
+  private resolveBumps(bumps: THREE.Vector3[], _dt: number) {
+    const r = BOARD.bumpRadius;
+    const velDir = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
+    for (const b of bumps) {
+      const dx = this.position.x - b.x;
+      const dz = this.position.z - b.z;
+      const dist = Math.hypot(dx, dz);
+      const minD = r + 1.6;
+      if (dist >= minD || dist < 1e-4) continue;
+      // Push out along separation
+      const nx = dx / dist;
+      const nz = dz / dist;
+      const pen = minD - dist;
+      this.position.x += nx * pen;
+      this.position.z += nz * pen;
+      // Keep most forward velocity; cancel into-obstacle component
+      const into = velDir.x * -nx + velDir.z * -nz; // how much vel aims into obstacle
+      if (into > 0) {
+        // Deflect velYaw away from obstacle slightly
+        const deflect = Math.atan2(nx, nz);
+        this.velYaw = dampAngle(this.velYaw, deflect, 12, 0.05);
+        this.speed *= BOARD.bumpKeepForward;
+        // Small outward shove as speed
+        this.speed = Math.max(this.speed, 3);
+      } else {
+        this.speed *= 0.92;
+      }
     }
   }
 
   isPowersliding() {
-    return this.powerslideT > 0;
+    return this.sliding;
+  }
+
+  isGrinding() {
+    return this.surface === 'rail';
   }
 }
 
-function buildBoardMesh(mats: Mats): THREE.Group {
+/** Follow-board for Elias (visual + simple chase). */
+export class FollowerBoard {
+  mesh: THREE.Group;
+  position = new THREE.Vector3();
+  yaw = 0;
+
+  constructor(mats: Mats) {
+    this.mesh = buildBoardMesh(mats);
+    // Tint rails green for Elias
+    this.mesh.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) {
+        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        if (m?.emissive) {
+          // leave keel; scale deck slightly
+        }
+      }
+    });
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.15, 8, 8),
+      new THREE.MeshStandardMaterial({
+        color: 0x44ff88,
+        emissive: 0x22aa44,
+        emissiveIntensity: 0.8,
+      }),
+    );
+    marker.position.set(0, 0.85, 0);
+    this.mesh.add(marker);
+  }
+
+  /** Trail behind leader */
+  follow(leader: Surfboard, dt: number) {
+    const back = new THREE.Vector3(-Math.sin(leader.yaw), 0, -Math.cos(leader.yaw));
+    const target = leader.position.clone().addScaledVector(back, 4.5);
+    target.y = leader.position.y;
+    this.position.lerp(target, 1 - Math.exp(-5 * dt));
+    this.yaw = dampAngle(this.yaw, leader.yaw, 6, dt);
+    this.mesh.position.copy(this.position);
+    this.mesh.position.y += Math.sin(performance.now() * 0.004) * 0.08;
+    this.mesh.rotation.order = 'YXZ';
+    this.mesh.rotation.y = this.yaw;
+    this.mesh.rotation.z = leader.bank * 0.7;
+  }
+}
+
+function closestPointOnSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
+  const ab = b.clone().sub(a);
+  const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / Math.max(1e-6, ab.lengthSq()), 0, 1);
+  return a.clone().addScaledVector(ab, t);
+}
+
+function dampAngle(current: number, target: number, lambda: number, dt: number): number {
+  let diff = target - current;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return current + diff * (1 - Math.exp(-lambda * dt));
+}
+
+export function buildBoardMesh(mats: Mats): THREE.Group {
   const g = new THREE.Group();
-  // Deck — long surfboard silhouette
   const deckMat = new THREE.MeshStandardMaterial({
     color: 0xe8d4a8,
     metalness: 0.35,
@@ -228,11 +455,9 @@ function buildBoardMesh(mats: Mats): THREE.Group {
   });
   const deck = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.12, 2.8), deckMat);
   deck.castShadow = true;
-  // Nose taper via scaled tip
   const nose = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.1, 0.7), deckMat);
   nose.position.set(0, 0.02, 1.5);
   nose.scale.set(0.7, 1, 1);
-  // Rails
   const railMat = new THREE.MeshStandardMaterial({
     color: 0x2a8fbf,
     metalness: 0.5,
@@ -244,7 +469,6 @@ function buildBoardMesh(mats: Mats): THREE.Group {
   const railR = railL.clone();
   railL.position.set(-0.42, 0.02, 0);
   railR.position.set(0.42, 0.02, 0);
-  // Plasma keel glow
   const keel = new THREE.Mesh(
     new THREE.BoxGeometry(0.2, 0.08, 2.2),
     new THREE.MeshStandardMaterial({
@@ -256,16 +480,13 @@ function buildBoardMesh(mats: Mats): THREE.Group {
     }),
   );
   keel.position.y = -0.1;
-  // Fin
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.5), mats.brass);
   fin.position.set(0, -0.28, -0.9);
-  // Soft pad
   const pad = new THREE.Mesh(
     new THREE.BoxGeometry(0.5, 0.04, 0.9),
     new THREE.MeshStandardMaterial({ color: 0x3a3040, roughness: 0.9 }),
   );
   pad.position.set(0, 0.1, -0.2);
-
   g.add(deck, nose, railL, railR, keel, fin, pad);
   return g;
 }
