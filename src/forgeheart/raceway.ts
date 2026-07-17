@@ -246,9 +246,9 @@ export function buildSkyRaceway(): RacewayBuilt {
       ramps.push(ramp);
     }
 
-    // Grind rails on one side
-    if (i % 31 === 7 && i + 4 < path.length) {
-      const rail = placeRail(group, mats, path[i]!, path[i + 4]!, dir, yaw, zc.side);
+    // Grind rails on alternating sides — longer segments for readable grinds
+    if (i % 24 === 6 && i + 8 < path.length) {
+      const rail = placeRail(group, mats, path[i]!, path[i + 8]!, dir, yaw, zc.side);
       rails.push(rail);
     }
   }

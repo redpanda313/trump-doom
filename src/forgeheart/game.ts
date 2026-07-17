@@ -462,8 +462,10 @@ export class ForgeHeartGame {
       const max = BOARD.maxSpeed;
       let mode = 'SKY SURF';
       if (this.board.isGrinding()) {
-        const bal = Math.round(Math.abs(this.board.grindBalance) * 100);
-        mode = `GRIND · BAL ${bal}%`;
+        const b = this.board.grindBalance;
+        const pct = Math.round(Math.abs(b) * 100);
+        const side = b < -0.08 ? '◀' : b > 0.08 ? '▶' : '●';
+        mode = `GRIND ${side}${pct}`;
       } else if (this.board.isPowersliding()) {
         mode = `SLIDE ${Math.round(this.board.slideCharge * 100)}%`;
       }

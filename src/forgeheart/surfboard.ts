@@ -54,17 +54,19 @@ export const BOARD = {
   /** Soft circle bumps — glance off, never drain speed when free */
   bumpRadius: 1.25,
   /** Grind */
-  grindCatchDist: 1.35,
-  grindCatchHeight: 1.8,
+  grindCatchDist: 1.5,
+  grindCatchHeight: 2.2,
   /** Min alignment (dot) between velocity and rail to mount */
-  grindAlign: 0.45,
-  grindMinSpeed: 4,
+  grindAlign: 0.35,
+  grindMinSpeed: 3.5,
   /** |balance| over this → fall off slow */
-  grindTipLimit: 0.9,
-  grindBalanceSteer: 2.4,
-  grindWobble: 0.85,
-  grindFallSpeedMul: 0.45,
+  grindTipLimit: 0.88,
+  grindBalanceSteer: 2.8,
+  grindWobble: 1.35,
+  grindFallSpeedMul: 0.42,
   grindEndSpeedMul: 1.0,
+  /** Seconds before you can re-catch a rail (prevents end/jump soft-lock) */
+  grindCooldown: 0.45,
   stuckNudge: 8,
 } as const;
 
@@ -101,6 +103,7 @@ export class Surfboard {
   private prevPos = new THREE.Vector3();
   private stuckT = 0;
   private wasAirborne = false;
+  private grindCd = 0;
   private sparks: GrindSpark[] = [];
   private sparkGroup = new THREE.Group();
 
@@ -138,7 +141,7 @@ export class Surfboard {
     this.sliding = false;
     this.slideCharge = 0;
     this.onGround = true;
-    this.exitGrind(false);
+    this.exitGrind('clear');
   }
 
   dismount(): THREE.Vector3 {
@@ -149,7 +152,7 @@ export class Surfboard {
     this.slideCharge = 0;
     this.speedNorm = 0;
     this.vy = 0;
-    this.exitGrind(false);
+    this.exitGrind('clear');
     const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     return this.position.clone().addScaledVector(side, 1.4).add(new THREE.Vector3(0, 0.5, 0));
   }
@@ -163,7 +166,8 @@ export class Surfboard {
   }
 
   requestJump() {
-    this.jumpBuffer = 0.15;
+    // Generous window so Space is reliable even with frame hitches
+    this.jumpBuffer = 0.28;
   }
 
   /**
@@ -186,63 +190,63 @@ export class Surfboard {
     bumps: THREE.Vector3[],
   ) {
     this.bobT += dt;
-    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+    this.grindCd = Math.max(0, this.grindCd - dt);
+    // Read jump BEFORE decaying buffer so Space always registers for at least one tick
+    const wantJump = this.jumpBuffer > 0;
+    if (this.jumpBuffer > 0) this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
 
     const near = nearestOnPath(path, pathDist, this.position);
     const roadY = near.point.y + BOARD.hoverHeight;
 
-    // ——— Detect ramp / rail surface ———
-    this.surface = 'road';
+    // ——— Detect ramp surface (not while grinding) ———
     let onRamp = false;
     let rampPitch = 0;
-    for (const r of ramps) {
-      const local = this.position.clone().sub(r.pos);
-      const forward = new THREE.Vector3(Math.sin(r.yaw), 0, Math.cos(r.yaw));
-      const along = local.dot(forward);
-      const right = new THREE.Vector3(forward.z, 0, -forward.x);
-      const lat = Math.abs(local.dot(right));
-      if (along > -0.5 && along < r.len + 0.5 && lat < 4.5) {
-        onRamp = true;
-        this.surface = 'ramp';
-        // Ramp rises along length
-        const t = THREE.MathUtils.clamp(along / r.len, 0, 1);
-        rampPitch = -0.35; // nose up feel
-        const rampTop = r.pos.y + t * 4.5 + BOARD.hoverHeight;
-        if (this.vy <= 0.5) {
-          this.position.y = Math.max(this.position.y, rampTop);
-          if (this.position.y <= rampTop + 0.35) {
-            this.onGround = true;
-            this.vy = 0;
+    if (!this.grindRail) {
+      this.surface = 'road';
+      for (const r of ramps) {
+        const local = this.position.clone().sub(r.pos);
+        const forward = new THREE.Vector3(Math.sin(r.yaw), 0, Math.cos(r.yaw));
+        const along = local.dot(forward);
+        const right = new THREE.Vector3(forward.z, 0, -forward.x);
+        const lat = Math.abs(local.dot(right));
+        if (along > -0.5 && along < r.len + 0.5 && lat < 4.5) {
+          onRamp = true;
+          this.surface = 'ramp';
+          const t = THREE.MathUtils.clamp(along / r.len, 0, 1);
+          rampPitch = -0.35;
+          const rampTop = r.pos.y + t * 4.5 + BOARD.hoverHeight;
+          if (this.vy <= 0.5) {
+            this.position.y = Math.max(this.position.y, rampTop);
+            if (this.position.y <= rampTop + 0.35) {
+              this.onGround = true;
+              this.vy = 0;
+            }
           }
+          break;
         }
-        break;
       }
     }
-
-    // Jump buffer (checked in grind + normal)
-    const wantJump = this.jumpBuffer > 0;
 
     // ——— Grind: enter / update / exit ———
     let grinding = this.grindRail != null;
     if (grinding && this.grindRail) {
-      // Jump off rail — keep most speed
       if (wantJump) {
+        // Jump off — keep speed, short cooldown so we don't re-snap
         this.jumpBuffer = 0;
-        this.exitGrind(false);
-        this.vy = BOARD.jumpVel * 0.95;
+        const launchYaw = this.yaw;
+        this.exitGrind('jump');
+        this.yaw = launchYaw;
+        this.velYaw = launchYaw;
+        this.vy = BOARD.jumpVel;
         this.onGround = false;
         this.surface = 'air';
+        this.speed = Math.max(this.speed, 8);
         grinding = false;
       } else {
-        const result = this.tickGrind(dt, steer);
-        grinding = result.still;
-        if (!result.still) {
-          // fell or end of rail
-        }
+        grinding = this.tickGrind(dt, steer);
       }
-    } else {
-      // Try to enter grind when landing or skimming a rail
-      this.tryEnterGrind(rails, wantJump);
+    } else if (this.grindCd <= 0) {
+      this.tryEnterGrind(rails);
       grinding = this.grindRail != null;
     }
 
@@ -400,25 +404,32 @@ export class Surfboard {
   }
 
   /**
-   * Mount a rail when near it, aligned with travel, landing or skimming.
+   * Mount a rail when near it and moving roughly along it.
+   * Uses physical t in [0,1] from a→b always (grindSense only flips travel direction).
    */
-  private tryEnterGrind(rails: { a: THREE.Vector3; b: THREE.Vector3 }[], _wantJump: boolean) {
+  private tryEnterGrind(rails: { a: THREE.Vector3; b: THREE.Vector3 }[]) {
     if (this.speed < BOARD.grindMinSpeed) return;
+    if (this.grindCd > 0) return;
+
     const vel = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
-    // Prefer landing from air, but also allow skimming while grounded if very close
-    const canCatch = this.wasAirborne || this.vy < -0.5 || this.onGround;
+    if (vel.lengthSq() < 1e-4) vel.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
 
     for (const rail of rails) {
-      const closest = closestPointOnSegment(this.position, rail.a, rail.b);
+      const railDir = rail.b.clone().sub(rail.a);
+      const railLen = railDir.length();
+      if (railLen < 1.5) continue;
+      railDir.multiplyScalar(1 / railLen);
+
+      // Parametric position along a→b
+      const toP = this.position.clone().sub(rail.a);
+      const t = toP.dot(railDir) / railLen;
+      if (t < 0.04 || t > 0.96) continue; // don't catch at the very tips
+
+      const closest = rail.a.clone().addScaledVector(railDir, t * railLen);
       const d = Math.hypot(this.position.x - closest.x, this.position.z - closest.z);
       const dy = this.position.y - closest.y;
       if (d > BOARD.grindCatchDist) continue;
-      if (dy > BOARD.grindCatchHeight || dy < -1.2) continue;
-
-      const railDir = rail.b.clone().sub(rail.a);
-      const railLen = railDir.length();
-      if (railLen < 0.5) continue;
-      railDir.multiplyScalar(1 / railLen);
+      if (dy > BOARD.grindCatchHeight || dy < -1.4) continue;
 
       let sense = 1;
       let align = vel.dot(railDir);
@@ -426,29 +437,20 @@ export class Surfboard {
         sense = -1;
         align = -align;
       }
-      if (align < BOARD.grindAlign && !this.wasAirborne) continue;
-      // Landing is more forgiving
-      if (align < BOARD.grindAlign * 0.65 && this.wasAirborne) continue;
-      if (!canCatch) continue;
-
-      // Parametric t on rail
-      const toA = this.position.clone().sub(rail.a);
-      let t = toA.dot(railDir) / railLen;
-      if (sense < 0) t = 1 - t;
-      t = THREE.MathUtils.clamp(t, 0.02, 0.98);
+      const need = this.wasAirborne || this.vy < -0.5 ? BOARD.grindAlign * 0.55 : BOARD.grindAlign;
+      if (align < need) continue;
 
       this.grindRail = rail;
       this.grindSense = sense;
-      this.grindT = t;
-      this.grindBalance = 0;
+      this.grindT = t; // always 0..1 along a→b
+      this.grindBalance = (Math.random() - 0.5) * 0.15; // slight initial lean so HUD reacts
       this.sliding = false;
+      this.slideCharge = 0;
       this.surface = 'rail';
       this.onGround = true;
       this.vy = 0;
       this.speed = Math.max(this.speed, BOARD.grindMinSpeed + 2);
-      // Snap onto rail
-      const along = sense > 0 ? t : 1 - t;
-      this.position.copy(rail.a).addScaledVector(railDir, along * railLen);
+      this.position.copy(closest);
       this.position.y = closest.y + 0.42;
       const faceDir = railDir.clone().multiplyScalar(sense);
       this.yaw = Math.atan2(faceDir.x, faceDir.z);
@@ -460,73 +462,86 @@ export class Surfboard {
   /**
    * Locked rail movement + balance. Returns whether still grinding.
    */
-  private tickGrind(dt: number, steer: number): { still: boolean } {
+  private tickGrind(dt: number, steer: number): boolean {
     const rail = this.grindRail;
-    if (!rail) return { still: false };
+    if (!rail) return false;
 
     const railDir = rail.b.clone().sub(rail.a);
     const railLen = railDir.length();
-    if (railLen < 0.4) {
-      this.exitGrind(true);
-      return { still: false };
+    if (railLen < 0.5) {
+      this.exitGrind('fall');
+      return false;
     }
     railDir.multiplyScalar(1 / railLen);
     const travel = railDir.clone().multiplyScalar(this.grindSense);
 
-    // Hold speed on rail (slight gain)
-    this.speed = Math.min(BOARD.maxSpeed * 1.05, Math.max(this.speed, 6) + 1.2 * dt);
+    // Hold / build speed on rail
+    this.speed = Math.min(BOARD.maxSpeed * 1.06, Math.max(this.speed, 7) + 2.5 * dt);
     this.speedNorm = this.speed / BOARD.maxSpeed;
 
-    // Advance along rail
+    // Advance t along a→b in travel direction
     const dtAlong = (this.speed * dt) / railLen;
-    this.grindT += dtAlong;
+    this.grindT += this.grindSense * dtAlong;
+
+    // End of rail → launch at full speed past the tip (cooldown prevents re-catch)
     if (this.grindT >= 1 || this.grindT <= 0) {
-      // End of rail — launch off at full speed
-      this.position.copy(this.grindT >= 1 ? rail.b : rail.a);
-      this.position.y += 0.35;
+      const atEnd = this.grindT >= 1;
+      this.position.copy(atEnd ? rail.b : rail.a);
+      this.position.addScaledVector(travel, 2.2); // clear the tip
+      this.position.y += 0.5;
       this.yaw = Math.atan2(travel.x, travel.z);
       this.velYaw = this.yaw;
-      this.speed = Math.min(BOARD.maxSpeed, this.speed * BOARD.grindEndSpeedMul + 2);
-      this.exitGrind(false);
-      return { still: false };
+      this.speed = Math.min(BOARD.maxSpeed, Math.max(this.speed, 14) + 3);
+      this.vy = 2.5;
+      this.onGround = false;
+      this.surface = 'air';
+      this.exitGrind('end');
+      return false;
     }
 
-    // Lock transform to rail
-    const along = this.grindSense > 0 ? this.grindT : 1 - this.grindT;
-    this.position.copy(rail.a).addScaledVector(railDir, along * railLen);
-    this.position.y = THREE.MathUtils.lerp(rail.a.y, rail.b.y, along) + 0.42;
+    // Lock to rail
+    this.position.copy(rail.a).addScaledVector(railDir, this.grindT * railLen);
+    this.position.y = THREE.MathUtils.lerp(rail.a.y, rail.b.y, this.grindT) + 0.42;
     this.yaw = Math.atan2(travel.x, travel.z);
     this.velYaw = this.yaw;
     this.onGround = true;
     this.vy = 0;
     this.surface = 'rail';
 
-    // Balance: wobble fights you; A/D counters
+    // Balance: instability pushes off-center; A/D counters (steer -1 left, +1 right)
     const wobble =
-      Math.sin(this.bobT * 4.2) * 0.55 +
-      Math.sin(this.bobT * 9.7) * 0.3 +
-      Math.sin(this.bobT * 2.1) * 0.2;
-    this.grindBalance += wobble * BOARD.grindWobble * dt * (0.7 + this.speedNorm);
+      Math.sin(this.bobT * 3.8) * 0.7 +
+      Math.sin(this.bobT * 7.3) * 0.45 +
+      Math.sin(this.bobT * 11.1) * 0.25;
+    // Push away from zero so you must actively balance
+    const bias = Math.sign(this.grindBalance || wobble) * (0.35 + this.speedNorm * 0.4);
+    this.grindBalance += (wobble + bias) * BOARD.grindWobble * dt;
     this.grindBalance += steer * BOARD.grindBalanceSteer * dt;
-    this.grindBalance = THREE.MathUtils.clamp(this.grindBalance, -1.15, 1.15);
+    this.grindBalance = THREE.MathUtils.clamp(this.grindBalance, -1.2, 1.2);
 
     if (Math.abs(this.grindBalance) >= BOARD.grindTipLimit) {
-      // Fall off — slower recovery
       const side = new THREE.Vector3(travel.z, 0, -travel.x);
-      this.position.addScaledVector(side, Math.sign(this.grindBalance) * 1.4);
-      this.speed *= BOARD.grindFallSpeedMul;
-      this.velYaw = this.yaw + Math.sign(this.grindBalance) * 0.4;
-      this.exitGrind(false);
-      return { still: false };
+      const fallDir = Math.sign(this.grindBalance) || 1;
+      this.position.addScaledVector(side, fallDir * 1.8);
+      this.position.y += 0.2;
+      this.speed = Math.max(3, this.speed * BOARD.grindFallSpeedMul);
+      this.velYaw = this.yaw + fallDir * 0.55;
+      this.yaw = this.velYaw;
+      this.vy = 1.5;
+      this.onGround = false;
+      this.surface = 'air';
+      this.exitGrind('fall');
+      return false;
     }
 
-    return { still: true };
+    return true;
   }
 
-  private exitGrind(_fullStop: boolean) {
+  private exitGrind(_reason: 'jump' | 'end' | 'fall' | 'clear') {
     this.grindRail = null;
     this.grindBalance = 0;
     this.grindT = 0;
+    this.grindCd = BOARD.grindCooldown;
     if (this.surface === 'rail') this.surface = 'road';
   }
 
@@ -682,12 +697,6 @@ export class FollowerBoard {
     this.mesh.rotation.y = this.yaw;
     this.mesh.rotation.z = leader.bank * 0.7;
   }
-}
-
-function closestPointOnSegment(p: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
-  const ab = b.clone().sub(a);
-  const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / Math.max(1e-6, ab.lengthSq()), 0, 1);
-  return a.clone().addScaledVector(ab, t);
 }
 
 function dampAngle(current: number, target: number, lambda: number, dt: number): number {
