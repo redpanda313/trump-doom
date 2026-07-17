@@ -53,10 +53,18 @@ export const BOARD = {
   offPathLimit: 32,
   /** Soft circle bumps — glance off, never drain speed when free */
   bumpRadius: 1.25,
-  grindSpeedMul: 1.08,
-  grindSnap: 10,
-  grindCatch: 1.05,
-  grindHold: 1.85,
+  /** Grind */
+  grindCatchDist: 1.35,
+  grindCatchHeight: 1.8,
+  /** Min alignment (dot) between velocity and rail to mount */
+  grindAlign: 0.45,
+  grindMinSpeed: 4,
+  /** |balance| over this → fall off slow */
+  grindTipLimit: 0.9,
+  grindBalanceSteer: 2.4,
+  grindWobble: 0.85,
+  grindFallSpeedMul: 0.45,
+  grindEndSpeedMul: 1.0,
   stuckNudge: 8,
 } as const;
 
@@ -80,12 +88,21 @@ export class Surfboard {
   /** 0..1 powerslide charge for mini-turbo */
   slideCharge = 0;
   sliding = false;
+  /** -1..1 lean while grinding — tip too far to fall */
+  grindBalance = 0;
+  /** 0..1 along current rail segment */
+  grindT = 0;
+  /** +1 or -1 travel sense on rail */
+  grindSense = 1;
 
   private bobT = 0;
   private jumpBuffer = 0;
   private grindRail: { a: THREE.Vector3; b: THREE.Vector3 } | null = null;
   private prevPos = new THREE.Vector3();
   private stuckT = 0;
+  private wasAirborne = false;
+  private sparks: GrindSpark[] = [];
+  private sparkGroup = new THREE.Group();
 
   constructor(mats: Mats, pos: THREE.Vector3, yaw: number) {
     this.position = pos.clone();
@@ -93,6 +110,7 @@ export class Surfboard {
     this.yaw = yaw;
     this.velYaw = yaw;
     this.mesh = buildBoardMesh(mats);
+    this.mesh.add(this.sparkGroup);
     this.mesh.position.copy(this.position);
     this.mesh.rotation.y = yaw;
   }
@@ -120,6 +138,7 @@ export class Surfboard {
     this.sliding = false;
     this.slideCharge = 0;
     this.onGround = true;
+    this.exitGrind(false);
   }
 
   dismount(): THREE.Vector3 {
@@ -130,9 +149,17 @@ export class Surfboard {
     this.slideCharge = 0;
     this.speedNorm = 0;
     this.vy = 0;
-    this.grindRail = null;
+    this.exitGrind(false);
     const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     return this.position.clone().addScaledVector(side, 1.4).add(new THREE.Vector3(0, 0.5, 0));
+  }
+
+  isGrinding() {
+    return this.grindRail != null;
+  }
+
+  getGrindBalance() {
+    return this.grindBalance;
   }
 
   requestJump() {
@@ -192,55 +219,32 @@ export class Surfboard {
       }
     }
 
-    // Grind rails — only catch when very close / already grinding; jump or steer away to leave
-    let grinding = false;
-    if (this.grindRail || this.onGround || this.vy < 2) {
-      const candidates = this.grindRail ? [this.grindRail, ...rails] : rails;
-      for (const rail of candidates) {
-        const closest = closestPointOnSegment(this.position, rail.a, rail.b);
-        const d = Math.hypot(this.position.x - closest.x, this.position.z - closest.z);
-        const catchR = this.grindRail === rail ? BOARD.grindHold : BOARD.grindCatch;
-        const heightOk =
-          this.position.y < closest.y + 2.2 && this.position.y > closest.y - 0.8;
-        if (d < catchR && heightOk) {
-          // Break free if steering hard away from rail or jumping
-          const railMid = rail.a.clone().add(rail.b).multiplyScalar(0.5);
-          const away = new THREE.Vector3(
-            this.position.x - railMid.x,
-            0,
-            this.position.z - railMid.z,
-          );
-          if (away.lengthSq() > 1e-4) away.normalize();
-          const face = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-          const steerAway = away.dot(face) > 0.35 && Math.abs(steer) > 0.55;
-          if (steerAway && this.grindRail === rail) {
-            this.grindRail = null;
-            continue;
-          }
-          grinding = true;
-          this.surface = 'rail';
-          this.grindRail = rail;
-          const railDir = rail.b.clone().sub(rail.a);
-          if (railDir.lengthSq() > 0.01) {
-            railDir.normalize();
-            if (face.dot(railDir) < 0) railDir.negate();
-            this.velYaw = Math.atan2(railDir.x, railDir.z);
-            this.yaw = dampAngle(this.yaw, this.velYaw, 6, dt);
-            this.position.x = THREE.MathUtils.damp(this.position.x, closest.x, BOARD.grindSnap, dt);
-            this.position.z = THREE.MathUtils.damp(this.position.z, closest.z, BOARD.grindSnap, dt);
-            this.position.y = closest.y + 0.45;
-            this.onGround = true;
-            this.vy = 0;
-            this.speed = Math.min(
-              BOARD.maxSpeed * BOARD.grindSpeedMul,
-              Math.max(this.speed, 8) + 3 * dt,
-            );
-          }
-          break;
+    // Jump buffer (checked in grind + normal)
+    const wantJump = this.jumpBuffer > 0;
+
+    // ——— Grind: enter / update / exit ———
+    let grinding = this.grindRail != null;
+    if (grinding && this.grindRail) {
+      // Jump off rail — keep most speed
+      if (wantJump) {
+        this.jumpBuffer = 0;
+        this.exitGrind(false);
+        this.vy = BOARD.jumpVel * 0.95;
+        this.onGround = false;
+        this.surface = 'air';
+        grinding = false;
+      } else {
+        const result = this.tickGrind(dt, steer);
+        grinding = result.still;
+        if (!result.still) {
+          // fell or end of rail
         }
       }
+    } else {
+      // Try to enter grind when landing or skimming a rail
+      this.tryEnterGrind(rails, wantJump);
+      grinding = this.grindRail != null;
     }
-    if (!grinding) this.grindRail = null;
 
     // ——— Powerslide enter/exit (hold Shift) ———
     const canSlide = this.speedNorm >= BOARD.slideMinSpeed && this.onGround && !grinding;
@@ -249,49 +253,53 @@ export class Surfboard {
       if (!this.sliding) this.sliding = true;
       this.slideCharge = Math.min(1, this.slideCharge + dt / BOARD.slideChargeFull);
     } else if (this.sliding) {
-      // Release → mini-turbo
       this.endPowerslide();
     }
 
-    // ——— Speed ———
-    if (grinding) {
-      // rails keep speed up
-      this.speed = Math.min(BOARD.maxSpeed * BOARD.grindSpeedMul, this.speed + 1.5 * dt);
-    } else if (accel > 0.1) {
-      this.speed += BOARD.accel * accel * dt;
-    } else if (accel < -0.1) {
-      this.speed -= BOARD.brake * -accel * dt;
-    } else {
-      this.speed -= BOARD.drag * dt * (this.sliding ? 0.5 : 1);
+    // ——— Speed (road) ———
+    if (!grinding) {
+      if (accel > 0.1) {
+        this.speed += BOARD.accel * accel * dt;
+      } else if (accel < -0.1) {
+        this.speed -= BOARD.brake * -accel * dt;
+      } else {
+        this.speed -= BOARD.drag * dt * (this.sliding ? 0.5 : 1);
+      }
+      this.speed = Math.max(0, Math.min(BOARD.maxSpeed, this.speed));
     }
-    this.speed = Math.max(0, Math.min(BOARD.maxSpeed * (grinding ? BOARD.grindSpeedMul : 1), this.speed));
     this.speedNorm = this.speed / BOARD.maxSpeed;
 
-    // ——— Bank & yaw (facing) ———
-    const bankTarget = THREE.MathUtils.clamp(steer, -1, 1) * BOARD.bankMax * (this.sliding ? 1.15 : 1);
-    const bankSpeed = BOARD.bankLerp * (1.2 - this.speedNorm * 0.5);
-    this.bank = THREE.MathUtils.damp(this.bank, bankTarget, bankSpeed, dt);
+    // ——— Bank & yaw (facing) — skipped while rail-locked except balance visual ———
+    if (!grinding) {
+      const bankTarget = THREE.MathUtils.clamp(steer, -1, 1) * BOARD.bankMax * (this.sliding ? 1.15 : 1);
+      const bankSpeed = BOARD.bankLerp * (1.2 - this.speedNorm * 0.5);
+      this.bank = THREE.MathUtils.damp(this.bank, bankTarget, bankSpeed, dt);
 
-    const turnBase = THREE.MathUtils.lerp(BOARD.turnRateSlow, BOARD.turnRateFast, this.speedNorm);
-    const turnMul = this.sliding ? BOARD.slideTurnMul : 1;
-    this.yaw += -this.bank * turnBase * turnMul * 1.75 * dt;
+      const turnBase = THREE.MathUtils.lerp(BOARD.turnRateSlow, BOARD.turnRateFast, this.speedNorm);
+      const turnMul = this.sliding ? BOARD.slideTurnMul : 1;
+      this.yaw += -this.bank * turnBase * turnMul * 1.75 * dt;
 
-    // ——— Velocity heading vs facing (the core of powerslide) ———
-    const align = this.sliding ? BOARD.slideGripAlign : BOARD.gripAlign;
-    this.velYaw = dampAngle(this.velYaw, this.yaw, align, dt);
+      const align = this.sliding ? BOARD.slideGripAlign : BOARD.gripAlign;
+      this.velYaw = dampAngle(this.velYaw, this.yaw, align, dt);
+    }
 
-    // While sliding, bleed velocity heading slower + add lateral
     const velFwd = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
     const faceFwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     const faceRight = new THREE.Vector3(faceFwd.z, 0, -faceFwd.x);
 
-    let move = velFwd.multiplyScalar(this.speed * dt);
-    if (this.sliding) {
-      move.addScaledVector(faceRight, -Math.sign(this.bank || steer || 0.001) * this.speed * BOARD.slideLateral * dt);
+    let move = new THREE.Vector3();
+    if (!grinding) {
+      move = velFwd.multiplyScalar(this.speed * dt);
+      if (this.sliding) {
+        move.addScaledVector(
+          faceRight,
+          -Math.sign(this.bank || steer || 0.001) * this.speed * BOARD.slideLateral * dt,
+        );
+      }
     }
 
-    // Jump
-    if (this.jumpBuffer > 0 && this.onGround) {
+    // Jump (road / ramp — not already handled by grind exit)
+    if (wantJump && this.onGround && !grinding) {
       this.jumpBuffer = 0;
       const rampBoost = onRamp && this.speedNorm > 0.4;
       this.vy = rampBoost ? BOARD.rampBoostJump : BOARD.jumpVel;
@@ -301,86 +309,266 @@ export class Surfboard {
       if (rampBoost) {
         this.speed = Math.min(BOARD.maxSpeed, this.speed + 4);
       }
+    } else if (wantJump && grinding) {
+      this.jumpBuffer = 0;
     }
 
     // Vertical
-    if (!this.onGround || this.surface === 'air') {
-      this.vy -= BOARD.gravity * dt;
-      this.position.y += this.vy * dt;
-      if (this.position.y <= roadY && this.vy <= 0 && !onRamp) {
-        this.position.y = roadY;
+    if (!grinding) {
+      if (!this.onGround || this.surface === 'air') {
+        this.vy -= BOARD.gravity * dt;
+        this.position.y += this.vy * dt;
+        if (this.position.y <= roadY && this.vy <= 0 && !onRamp) {
+          this.position.y = roadY;
+          this.vy = 0;
+          this.onGround = true;
+          this.surface = 'road';
+        }
+      } else if (!onRamp) {
+        this.position.y = THREE.MathUtils.damp(this.position.y, roadY, 8, dt);
+        this.vy = 0;
+      }
+      this.position.x += move.x;
+      this.position.z += move.z;
+    }
+
+    this.updateSparks(dt, grinding);
+
+    // Soft path magnet / bumps / anti-stuck only off-rail
+    if (!grinding) {
+      const lateral = new THREE.Vector3(this.position.x - near.point.x, 0, this.position.z - near.point.z);
+      let latLen = lateral.length();
+      if (latLen > 12 && this.onGround) {
+        const pull = Math.min(1, (latLen - 12) / 16);
+        this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 0.7 * pull, dt);
+        this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 0.7 * pull, dt);
+      }
+
+      this.resolveBumps(bumps, near.yaw, dt);
+
+      const moved = this.position.distanceTo(this.prevPos);
+      if (this.speed > 5 && moved < this.speed * dt * 0.12 && this.onGround) {
+        this.stuckT += dt;
+        if (this.stuckT > 0.2) {
+          const pathFwd = new THREE.Vector3(Math.sin(near.yaw), 0, Math.cos(near.yaw));
+          this.position.addScaledVector(pathFwd, BOARD.stuckNudge * dt * this.speed);
+          this.velYaw = near.yaw;
+          this.yaw = dampAngle(this.yaw, near.yaw, 4, dt);
+          this.speed = Math.max(this.speed, 6);
+          this.stuckT = 0;
+        }
+      } else {
+        this.stuckT = Math.max(0, this.stuckT - dt * 2);
+      }
+
+      latLen = Math.hypot(this.position.x - near.point.x, this.position.z - near.point.z);
+      if (this.position.y < -8 || latLen > BOARD.offPathLimit) {
+        this.position.copy(near.point);
+        this.position.y = near.point.y + BOARD.hoverHeight;
+        this.yaw = near.yaw;
+        this.velYaw = near.yaw;
+        this.speed = Math.max(this.speed * 0.5, 4);
         this.vy = 0;
         this.onGround = true;
-        this.surface = 'road';
-      }
-    } else if (!onRamp && !grinding) {
-      this.position.y = THREE.MathUtils.damp(this.position.y, roadY, 8, dt);
-      this.vy = 0;
-    }
-
-    this.position.x += move.x;
-    this.position.z += move.z;
-
-    // Soft path magnet when far (not a hard wall)
-    const lateral = new THREE.Vector3(this.position.x - near.point.x, 0, this.position.z - near.point.z);
-    let latLen = lateral.length();
-    if (latLen > 12 && this.onGround && !grinding) {
-      const pull = Math.min(1, (latLen - 12) / 16);
-      this.position.x = THREE.MathUtils.damp(this.position.x, near.point.x, 0.7 * pull, dt);
-      this.position.z = THREE.MathUtils.damp(this.position.z, near.point.z, 0.7 * pull, dt);
-    }
-
-    // Hard bumps (roadside buildings only) — slide along, keep path progress
-    this.resolveBumps(bumps, near.yaw, dt);
-
-    // Anti-stuck: speed high but almost no displacement → shove along the road
-    const moved = this.position.distanceTo(this.prevPos);
-    if (this.speed > 5 && moved < this.speed * dt * 0.12 && this.onGround) {
-      this.stuckT += dt;
-      if (this.stuckT > 0.2) {
-        const pathFwd = new THREE.Vector3(Math.sin(near.yaw), 0, Math.cos(near.yaw));
-        this.position.addScaledVector(pathFwd, BOARD.stuckNudge * dt * this.speed);
-        this.velYaw = near.yaw;
-        this.yaw = dampAngle(this.yaw, near.yaw, 4, dt);
-        this.speed = Math.max(this.speed, 6);
         this.stuckT = 0;
       }
-    } else {
-      this.stuckT = Math.max(0, this.stuckT - dt * 2);
     }
     this.prevPos.copy(this.position);
-
-    // Recompute lateral after bumps
-    latLen = Math.hypot(this.position.x - near.point.x, this.position.z - near.point.z);
-
-    // Void rescue while mounted
-    if (this.position.y < -8 || latLen > BOARD.offPathLimit) {
-      this.position.copy(near.point);
-      this.position.y = near.point.y + BOARD.hoverHeight;
-      this.yaw = near.yaw;
-      this.velYaw = near.yaw;
-      this.speed = Math.max(this.speed * 0.5, 4);
-      this.vy = 0;
-      this.onGround = true;
-      this.stuckT = 0;
-    }
+    this.wasAirborne = !this.onGround && !grinding;
 
     // Visuals
     const bob =
       Math.sin(this.bobT * BOARD.bobHz * Math.PI * 2) *
       BOARD.bobAmp *
-      (this.onGround ? 0.35 + this.speedNorm * 0.25 : 0);
+      (grinding ? 0.08 : this.onGround ? 0.35 + this.speedNorm * 0.25 : 0);
     this.mesh.position.set(this.position.x, this.position.y + bob, this.position.z);
     this.mesh.rotation.order = 'YXZ';
     this.mesh.rotation.y = this.yaw;
-    // Bank shows slide more aggressively
-    const slideKick = this.sliding ? -Math.sign(steer || this.bank || 1) * 0.2 : 0;
-    this.mesh.rotation.z = this.bank + slideKick;
-    this.mesh.rotation.x =
-      -this.speedNorm * 0.08 +
-      (accel > 0 ? -0.05 : accel < 0 ? 0.06 : 0) +
-      rampPitch +
-      (this.onGround ? 0 : -0.12);
+    if (grinding) {
+      this.bank = this.grindBalance * BOARD.bankMax;
+      this.mesh.rotation.z = this.bank;
+      this.mesh.rotation.x = -0.04;
+    } else {
+      const slideKick = this.sliding ? -Math.sign(steer || this.bank || 1) * 0.2 : 0;
+      this.mesh.rotation.z = this.bank + slideKick;
+      this.mesh.rotation.x =
+        -this.speedNorm * 0.08 +
+        (accel > 0 ? -0.05 : accel < 0 ? 0.06 : 0) +
+        rampPitch +
+        (this.onGround ? 0 : -0.12);
+    }
+  }
+
+  /**
+   * Mount a rail when near it, aligned with travel, landing or skimming.
+   */
+  private tryEnterGrind(rails: { a: THREE.Vector3; b: THREE.Vector3 }[], _wantJump: boolean) {
+    if (this.speed < BOARD.grindMinSpeed) return;
+    const vel = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
+    // Prefer landing from air, but also allow skimming while grounded if very close
+    const canCatch = this.wasAirborne || this.vy < -0.5 || this.onGround;
+
+    for (const rail of rails) {
+      const closest = closestPointOnSegment(this.position, rail.a, rail.b);
+      const d = Math.hypot(this.position.x - closest.x, this.position.z - closest.z);
+      const dy = this.position.y - closest.y;
+      if (d > BOARD.grindCatchDist) continue;
+      if (dy > BOARD.grindCatchHeight || dy < -1.2) continue;
+
+      const railDir = rail.b.clone().sub(rail.a);
+      const railLen = railDir.length();
+      if (railLen < 0.5) continue;
+      railDir.multiplyScalar(1 / railLen);
+
+      let sense = 1;
+      let align = vel.dot(railDir);
+      if (align < 0) {
+        sense = -1;
+        align = -align;
+      }
+      if (align < BOARD.grindAlign && !this.wasAirborne) continue;
+      // Landing is more forgiving
+      if (align < BOARD.grindAlign * 0.65 && this.wasAirborne) continue;
+      if (!canCatch) continue;
+
+      // Parametric t on rail
+      const toA = this.position.clone().sub(rail.a);
+      let t = toA.dot(railDir) / railLen;
+      if (sense < 0) t = 1 - t;
+      t = THREE.MathUtils.clamp(t, 0.02, 0.98);
+
+      this.grindRail = rail;
+      this.grindSense = sense;
+      this.grindT = t;
+      this.grindBalance = 0;
+      this.sliding = false;
+      this.surface = 'rail';
+      this.onGround = true;
+      this.vy = 0;
+      this.speed = Math.max(this.speed, BOARD.grindMinSpeed + 2);
+      // Snap onto rail
+      const along = sense > 0 ? t : 1 - t;
+      this.position.copy(rail.a).addScaledVector(railDir, along * railLen);
+      this.position.y = closest.y + 0.42;
+      const faceDir = railDir.clone().multiplyScalar(sense);
+      this.yaw = Math.atan2(faceDir.x, faceDir.z);
+      this.velYaw = this.yaw;
+      return;
+    }
+  }
+
+  /**
+   * Locked rail movement + balance. Returns whether still grinding.
+   */
+  private tickGrind(dt: number, steer: number): { still: boolean } {
+    const rail = this.grindRail;
+    if (!rail) return { still: false };
+
+    const railDir = rail.b.clone().sub(rail.a);
+    const railLen = railDir.length();
+    if (railLen < 0.4) {
+      this.exitGrind(true);
+      return { still: false };
+    }
+    railDir.multiplyScalar(1 / railLen);
+    const travel = railDir.clone().multiplyScalar(this.grindSense);
+
+    // Hold speed on rail (slight gain)
+    this.speed = Math.min(BOARD.maxSpeed * 1.05, Math.max(this.speed, 6) + 1.2 * dt);
+    this.speedNorm = this.speed / BOARD.maxSpeed;
+
+    // Advance along rail
+    const dtAlong = (this.speed * dt) / railLen;
+    this.grindT += dtAlong;
+    if (this.grindT >= 1 || this.grindT <= 0) {
+      // End of rail — launch off at full speed
+      this.position.copy(this.grindT >= 1 ? rail.b : rail.a);
+      this.position.y += 0.35;
+      this.yaw = Math.atan2(travel.x, travel.z);
+      this.velYaw = this.yaw;
+      this.speed = Math.min(BOARD.maxSpeed, this.speed * BOARD.grindEndSpeedMul + 2);
+      this.exitGrind(false);
+      return { still: false };
+    }
+
+    // Lock transform to rail
+    const along = this.grindSense > 0 ? this.grindT : 1 - this.grindT;
+    this.position.copy(rail.a).addScaledVector(railDir, along * railLen);
+    this.position.y = THREE.MathUtils.lerp(rail.a.y, rail.b.y, along) + 0.42;
+    this.yaw = Math.atan2(travel.x, travel.z);
+    this.velYaw = this.yaw;
+    this.onGround = true;
+    this.vy = 0;
+    this.surface = 'rail';
+
+    // Balance: wobble fights you; A/D counters
+    const wobble =
+      Math.sin(this.bobT * 4.2) * 0.55 +
+      Math.sin(this.bobT * 9.7) * 0.3 +
+      Math.sin(this.bobT * 2.1) * 0.2;
+    this.grindBalance += wobble * BOARD.grindWobble * dt * (0.7 + this.speedNorm);
+    this.grindBalance += steer * BOARD.grindBalanceSteer * dt;
+    this.grindBalance = THREE.MathUtils.clamp(this.grindBalance, -1.15, 1.15);
+
+    if (Math.abs(this.grindBalance) >= BOARD.grindTipLimit) {
+      // Fall off — slower recovery
+      const side = new THREE.Vector3(travel.z, 0, -travel.x);
+      this.position.addScaledVector(side, Math.sign(this.grindBalance) * 1.4);
+      this.speed *= BOARD.grindFallSpeedMul;
+      this.velYaw = this.yaw + Math.sign(this.grindBalance) * 0.4;
+      this.exitGrind(false);
+      return { still: false };
+    }
+
+    return { still: true };
+  }
+
+  private exitGrind(_fullStop: boolean) {
+    this.grindRail = null;
+    this.grindBalance = 0;
+    this.grindT = 0;
+    if (this.surface === 'rail') this.surface = 'road';
+  }
+
+  private updateSparks(dt: number, grinding: boolean) {
+    // Age existing
+    for (let i = this.sparks.length - 1; i >= 0; i--) {
+      const s = this.sparks[i]!;
+      s.life -= dt;
+      s.mesh.position.addScaledVector(s.vel, dt);
+      s.vel.y -= 18 * dt;
+      s.mesh.scale.multiplyScalar(0.92);
+      if (s.life <= 0) {
+        this.sparkGroup.remove(s.mesh);
+        s.mesh.geometry.dispose();
+        (s.mesh.material as THREE.Material).dispose();
+        this.sparks.splice(i, 1);
+      }
+    }
+    if (!grinding) return;
+
+    // Emit yellow sparks under the board
+    const n = 3 + Math.floor(this.speedNorm * 4);
+    for (let i = 0; i < n; i++) {
+      if (this.sparks.length > 48) break;
+      const geo = new THREE.BoxGeometry(0.06, 0.06, 0.06);
+      const mat = new THREE.MeshBasicMaterial({
+        color: Math.random() > 0.35 ? 0xffee44 : 0xffaa22,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(
+        (Math.random() - 0.5) * 0.5,
+        -0.15,
+        -0.6 + (Math.random() - 0.5) * 0.4,
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * 6,
+        1 + Math.random() * 5,
+        -2 - Math.random() * 4,
+      );
+      this.sparkGroup.add(mesh);
+      this.sparks.push({ mesh, vel, life: 0.15 + Math.random() * 0.25 });
+    }
   }
 
   private endPowerslide() {
@@ -388,7 +576,6 @@ export class Surfboard {
     const charge = this.slideCharge;
     this.sliding = false;
     this.slideCharge = 0;
-    // Snap momentum toward face + boost
     this.velYaw = this.yaw;
     const boost = THREE.MathUtils.lerp(BOARD.slideBoostMin, BOARD.slideBoostMax, charge);
     this.speed = Math.min(BOARD.maxSpeed, this.speed + boost);
@@ -445,10 +632,12 @@ export class Surfboard {
   isPowersliding() {
     return this.sliding;
   }
+}
 
-  isGrinding() {
-    return this.surface === 'rail';
-  }
+interface GrindSpark {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  life: number;
 }
 
 /** Follow-board for Elias (visual + simple chase). */

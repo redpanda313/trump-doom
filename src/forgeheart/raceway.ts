@@ -382,32 +382,48 @@ function placeRail(
   color: number,
 ): RaceRail {
   const right = new THREE.Vector3(dir.z, 0, -dir.x);
-  const side = ROAD_W / 2 + 1.2;
+  // Closer to the road so you can jump onto it from the lane
+  const side = ROAD_W / 2 + 0.55;
   const ra = a.clone().addScaledVector(right, side);
   const rb = b.clone().addScaledVector(right, side);
-  ra.y = a.y + 0.9;
-  rb.y = b.y + 0.9;
+  ra.y = a.y + 0.75;
+  rb.y = b.y + 0.75;
   const mid = ra.clone().add(rb).multiplyScalar(0.5);
   const len = ra.distanceTo(rb);
   const rail = new THREE.Mesh(
-    new THREE.BoxGeometry(0.35, 0.25, len),
+    new THREE.BoxGeometry(0.45, 0.22, len),
     new THREE.MeshStandardMaterial({
-      color: 0xc0d0e0,
-      metalness: 0.85,
-      roughness: 0.25,
-      emissive: color,
-      emissiveIntensity: 0.15,
+      color: 0xe8f0ff,
+      metalness: 0.9,
+      roughness: 0.2,
+      emissive: 0xffcc33,
+      emissiveIntensity: 0.45,
     }),
   );
   rail.position.copy(mid);
   rail.rotation.y = yaw;
   group.add(rail);
-  // Supports
+  // Glow strip on top
+  const strip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2, 0.06, len * 0.98),
+    new THREE.MeshStandardMaterial({
+      color: 0xffee66,
+      emissive: 0xffaa00,
+      emissiveIntensity: 0.9,
+      metalness: 0.3,
+      roughness: 0.4,
+    }),
+  );
+  strip.position.copy(mid);
+  strip.position.y += 0.14;
+  strip.rotation.y = yaw;
+  group.add(strip);
   for (const p of [ra, rb]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.2, 6), mats.iron);
-    post.position.set(p.x, p.y - 0.5, p.z);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.0, 6), mats.iron);
+    post.position.set(p.x, p.y - 0.4, p.z);
     group.add(post);
   }
+  void color;
   return { a: ra, b: rb };
 }
 

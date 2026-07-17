@@ -461,9 +461,12 @@ export class ForgeHeartGame {
       const sp = Math.round(this.board.speed);
       const max = BOARD.maxSpeed;
       let mode = 'SKY SURF';
-      if (this.board.isGrinding()) mode = 'GRIND';
-      else if (this.board.isPowersliding())
+      if (this.board.isGrinding()) {
+        const bal = Math.round(Math.abs(this.board.grindBalance) * 100);
+        mode = `GRIND · BAL ${bal}%`;
+      } else if (this.board.isPowersliding()) {
         mode = `SLIDE ${Math.round(this.board.slideCharge * 100)}%`;
+      }
       this.weaponEl.textContent = mode;
       this.statsEl.textContent = `${this.objective} · ${sp}/${max} u/s`;
       if (this.locEl) this.locEl.textContent = 'Sky City · Racetrack';
@@ -1453,7 +1456,7 @@ export class ForgeHeartGame {
     this.toast(
       this.bringEliasToRace
         ? 'Elias rides with you. Hold Shift + A/D to powerslide — release for mini-turbo. Space jumps; hit ramps and rails.'
-        : 'Hold Shift + A/D to powerslide (release for boost). Space jump · ramps boost · grind rails.',
+        : 'Shift+A/D powerslide · Space jump · land on glowing rails to grind · A/D balance · tip = fall',
       8,
     );
     this.audio.setWind(0.35);
@@ -1780,7 +1783,7 @@ export class ForgeHeartGame {
         7,
       );
       this.setHelp(
-        'W/S speed · A/D bank · hold Shift slide · Space jump · grind rails · E dismount (slow)',
+        'W/S · A/D bank · Shift slide · Space jump · land on yellow rails to grind · balance A/D · Space leave rail',
       );
       this.objective = 'Ride the sky road to the golden finish gate';
       return true;
