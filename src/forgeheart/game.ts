@@ -95,6 +95,9 @@ export class ForgeHeartGame {
   private bangTimer = 0;
   private readonly bangsTotal = 10;
   private readonly bangInterval = 3;
+  /** Arc wrench hits needed to force the lab door during siege */
+  private doorHp = 4;
+  private readonly doorHpMax = 4;
   private brotherScrapped = false;
   private hadAllyOnce = false;
   private objective = 'Read the lab. Wake Elias with the Hand (1) — do not scrap him.';
@@ -467,6 +470,8 @@ export class ForgeHeartGame {
       const origin = this.camera.position.clone();
       const dir = new THREE.Vector3();
       this.camera.getWorldDirection(dir);
+      // Optional: force the lab door open early during the siege
+      if (this.tryBashLabDoor(origin, dir)) return;
       for (const r of this.robots) {
         if (r.phase !== 'active') continue;
         const to = r.position.clone().add(new THREE.Vector3(0, 1, 0)).sub(origin);
@@ -544,11 +549,15 @@ export class ForgeHeartGame {
     this.tutorial = 'siege';
     this.bangCount = 0;
     this.bangTimer = 1.2;
+    this.doorHp = this.doorHpMax;
     this.audio.setTension(0.55);
     this.objective = 'Something is at the door…';
-    this.setHelp('Protect Elias · wait · grab the Arc Wrench when it appears');
+    this.setHelp('Grab Arc Wrench (E) · wait out the bangs — or bash the door open with 2');
     this.flash('A BANG at the lab door —');
-    this.toast('Demon-ridden frames. Hold the workshop. The door will not hold forever.', 5);
+    this.toast(
+      'Demon-ridden frames. Hold the workshop — or take the Arc Wrench and force the door open early.',
+      5,
+    );
     // Reveal wrench on the rack
     for (const it of this.interactables) {
       if (it.type === 'wrench_pickup') {
@@ -556,6 +565,50 @@ export class ForgeHeartGame {
         if (it.prompt) it.prompt.visible = true;
       }
     }
+  }
+
+  /**
+   * Arc the sealed lab door during siege. Returns true if the swing hit the door.
+   * Enough hits force a breach without waiting for all outside bangs.
+   */
+  private tryBashLabDoor(origin: THREE.Vector3, dir: THREE.Vector3): boolean {
+    if (this.tutorial !== 'siege') return false;
+    // Intersect ray with door plane (z ≈ 8)
+    const doorZ = this.level.anchors.doorSpot.z;
+    if (Math.abs(dir.z) < 0.08) return false;
+    const t = (doorZ - origin.z) / dir.z;
+    if (t < 0.35 || t > 3.4) return false;
+    const hit = origin.clone().addScaledVector(dir, t);
+    // Door opening bounds (must face the seal, not side walls)
+    if (Math.abs(hit.x) > 2.55) return false;
+    if (hit.y < 0.15 || hit.y > 3.4) return false;
+    // Prefer swinging from inside the lab
+    if (origin.z > doorZ + 0.4) return false;
+
+    this.doorHp = Math.max(0, this.doorHp - 1);
+    this.audio.playBang(0.45 + (1 - this.doorHp / this.doorHpMax) * 0.5);
+    // Visual rattle
+    for (const m of this.level.labDoor.meshes) {
+      m.position.x += (Math.random() - 0.5) * 0.08;
+      m.position.z += (Math.random() - 0.5) * 0.03;
+    }
+
+    if (this.doorHp <= 0) {
+      this.flash('DOOR BREACHED — you forced it open!');
+      this.toast('The seal yields to the arc. Whatever was banging is coming through.', 4);
+      this.breachDoor('forced');
+      return true;
+    }
+
+    const left = this.doorHp;
+    this.objective = `Bash the door · ${this.doorHpMax - left}/${this.doorHpMax} arc hits`;
+    this.toast(
+      left === 1
+        ? 'Door almost broken — one more arc!'
+        : `Iron rings under the wrench — ${left} hits left.`,
+      2,
+    );
+    return true;
   }
 
   private tickTutorial(dt: number) {
@@ -600,8 +653,10 @@ export class ForgeHeartGame {
     }
   }
 
-  private breachDoor() {
+  private breachDoor(reason: 'timer' | 'forced' = 'timer') {
+    if (this.tutorial !== 'siege') return; // already open / not in siege
     this.tutorial = 'breach';
+    this.doorHp = 0;
     this.audio.setTension(1);
     this.audio.playBang(1.2);
     // Remove door collision + hide meshes
@@ -622,8 +677,13 @@ export class ForgeHeartGame {
     }
     this.objective = 'Survive — arc the demons, keep Elias close';
     this.setHelp('2 Wrench · scramble or KO · Hand reprogram optional · flee to the dock if needed');
-    this.flash('THE DOOR GIVES — two demon frames!');
-    this.toast('They wear scrap like coats. Arc wrench for combat. Elias will fight beside you.', 5);
+    if (reason === 'forced') {
+      this.flash('YOU OPENED THE DOOR — two demon frames!');
+      this.toast('They wear scrap like coats. Fight with Elias or run for the skiff.', 5);
+    } else {
+      this.flash('THE DOOR GIVES — two demon frames!');
+      this.toast('They wear scrap like coats. Arc wrench for combat. Elias will fight beside you.', 5);
+    }
     // Auto-offer wrench if not taken
     if (!this.wrenchUnlocked) {
       this.toast('Arc Wrench still on the rack — grab it (E)!', 3);
@@ -1004,8 +1064,12 @@ export class ForgeHeartGame {
       this.wrenchUnlocked = true;
       this.weapon = 'wrench';
       this.audio.playPickup();
-      this.flash('ARC WRENCH — 2 to equip · spend plasma on swings');
-      this.setHelp('2 Wrench · 1 Hand · arcs cost plasma · settle back to EQ');
+      this.flash('ARC WRENCH — bash the door or wait · plasma per swing');
+      this.setHelp(
+        this.tutorial === 'siege'
+          ? 'Aim at the lab door and swing · or wait for it to fail · 1 Hand'
+          : '2 Wrench · 1 Hand · arcs cost plasma · settle back to EQ',
+      );
       return;
     }
     if (it.type === 'boat' && !it.opened) {
