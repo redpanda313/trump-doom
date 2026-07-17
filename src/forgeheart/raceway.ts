@@ -18,9 +18,10 @@ export interface RaceRamp {
   len: number;
 }
 
+/** Polyline rail that follows the path (not a single straight segment). */
 export interface RaceRail {
-  a: THREE.Vector3;
-  b: THREE.Vector3;
+  /** Ordered points along the rail centerline */
+  points: THREE.Vector3[];
 }
 
 export interface RacewayBuilt {
@@ -246,10 +247,11 @@ export function buildSkyRaceway(): RacewayBuilt {
       ramps.push(ramp);
     }
 
-    // Grind rails on alternating sides — longer segments for readable grinds
-    if (i % 24 === 6 && i + 8 < path.length) {
-      const rail = placeRail(group, mats, path[i]!, path[i + 8]!, dir, yaw, zc.side);
-      rails.push(rail);
+    // Grind rails: build as path-following polylines (visual = physics)
+    if (i % 26 === 5 && i + 10 < path.length) {
+      const side = i % 52 < 26 ? 1 : -1;
+      const rail = placeRailChain(group, mats, path, i, i + 10, side);
+      if (rail) rails.push(rail);
     }
   }
 
@@ -372,59 +374,184 @@ function placeRamp(
   return { pos: mid.clone(), yaw, len };
 }
 
-function placeRail(
+/**
+ * Build a rail that tracks the path: each short yellow bar matches a path
+ * segment, and physics points are the same polyline.
+ */
+function placeRailChain(
   group: THREE.Group,
   mats: Mats,
-  a: THREE.Vector3,
-  b: THREE.Vector3,
-  dir: THREE.Vector3,
-  yaw: number,
-  color: number,
-): RaceRail {
-  const right = new THREE.Vector3(dir.z, 0, -dir.x);
-  // Closer to the road so you can jump onto it from the lane
-  const side = ROAD_W / 2 + 0.55;
-  const ra = a.clone().addScaledVector(right, side);
-  const rb = b.clone().addScaledVector(right, side);
-  ra.y = a.y + 0.75;
-  rb.y = b.y + 0.75;
-  const mid = ra.clone().add(rb).multiplyScalar(0.5);
-  const len = ra.distanceTo(rb);
-  const rail = new THREE.Mesh(
-    new THREE.BoxGeometry(0.45, 0.22, len),
-    new THREE.MeshStandardMaterial({
-      color: 0xe8f0ff,
-      metalness: 0.9,
-      roughness: 0.2,
-      emissive: 0xffcc33,
-      emissiveIntensity: 0.45,
-    }),
-  );
-  rail.position.copy(mid);
-  rail.rotation.y = yaw;
-  group.add(rail);
-  // Glow strip on top
-  const strip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.2, 0.06, len * 0.98),
-    new THREE.MeshStandardMaterial({
-      color: 0xffee66,
-      emissive: 0xffaa00,
-      emissiveIntensity: 0.9,
-      metalness: 0.3,
-      roughness: 0.4,
-    }),
-  );
-  strip.position.copy(mid);
-  strip.position.y += 0.14;
-  strip.rotation.y = yaw;
-  group.add(strip);
-  for (const p of [ra, rb]) {
+  path: THREE.Vector3[],
+  i0: number,
+  i1: number,
+  sideSign: number,
+): RaceRail | null {
+  const sideOff = ROAD_W / 2 + 0.55;
+  const points: THREE.Vector3[] = [];
+
+  for (let i = i0; i <= i1; i++) {
+    const p = path[i]!;
+    // Tangent from neighbors so the rail hugs the curve
+    const prev = path[Math.max(0, i - 1)]!;
+    const next = path[Math.min(path.length - 1, i + 1)]!;
+    const tan = next.clone().sub(prev);
+    tan.y = 0;
+    if (tan.lengthSq() < 1e-6) tan.set(0, 0, 1);
+    else tan.normalize();
+    const right = new THREE.Vector3(tan.z, 0, -tan.x);
+    const rp = p.clone().addScaledVector(right, sideSign * sideOff);
+    rp.y = p.y + 0.72;
+    points.push(rp);
+  }
+
+  if (points.length < 2) return null;
+
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: 0xe8f0ff,
+    metalness: 0.9,
+    roughness: 0.2,
+    emissive: 0xffcc33,
+    emissiveIntensity: 0.45,
+  });
+  const stripMat = new THREE.MeshStandardMaterial({
+    color: 0xffee66,
+    emissive: 0xffaa00,
+    emissiveIntensity: 0.95,
+    metalness: 0.3,
+    roughness: 0.4,
+  });
+
+  // One visual bar per polyline edge — oriented exactly a→b
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const delta = b.clone().sub(a);
+    const len = delta.length();
+    if (len < 0.05) continue;
+    const yaw = Math.atan2(delta.x, delta.z);
+    // Pitch if height changes
+    const horiz = Math.hypot(delta.x, delta.z);
+    const pitch = horiz > 1e-4 ? -Math.atan2(delta.y, horiz) : 0;
+
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.2, len + 0.05), bodyMat);
+    bar.position.copy(mid);
+    bar.rotation.order = 'YXZ';
+    bar.rotation.y = yaw;
+    bar.rotation.x = pitch;
+    group.add(bar);
+
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, len * 0.98), stripMat);
+    strip.position.copy(mid);
+    strip.position.y += 0.12;
+    strip.rotation.order = 'YXZ';
+    strip.rotation.y = yaw;
+    strip.rotation.x = pitch;
+    group.add(strip);
+  }
+
+  // End posts
+  for (const p of [points[0]!, points[points.length - 1]!]) {
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.0, 6), mats.iron);
     post.position.set(p.x, p.y - 0.4, p.z);
     group.add(post);
   }
-  void color;
-  return { a: ra, b: rb };
+
+  return { points };
+}
+
+/** Closest point on a rail polyline + segment index and t along that edge. */
+export function closestOnRail(
+  rail: RaceRail,
+  pos: THREE.Vector3,
+): { point: THREE.Vector3; seg: number; t: number; dist: number; dir: THREE.Vector3 } {
+  let bestDist = Infinity;
+  let bestPoint = rail.points[0]!.clone();
+  let bestSeg = 0;
+  let bestT = 0;
+  let bestDir = new THREE.Vector3(0, 0, 1);
+
+  for (let i = 0; i < rail.points.length - 1; i++) {
+    const a = rail.points[i]!;
+    const b = rail.points[i + 1]!;
+    const ab = b.clone().sub(a);
+    const abLenSq = ab.lengthSq();
+    if (abLenSq < 1e-8) continue;
+    let t = pos.clone().sub(a).dot(ab) / abLenSq;
+    t = THREE.MathUtils.clamp(t, 0, 1);
+    const pt = a.clone().addScaledVector(ab, t);
+    const d = pos.distanceTo(pt);
+    if (d < bestDist) {
+      bestDist = d;
+      bestPoint = pt;
+      bestSeg = i;
+      bestT = t;
+      bestDir = ab.normalize();
+    }
+  }
+  return { point: bestPoint, seg: bestSeg, t: bestT, dist: bestDist, dir: bestDir };
+}
+
+/** Total length of rail polyline. */
+export function railLength(rail: RaceRail): number {
+  let len = 0;
+  for (let i = 0; i < rail.points.length - 1; i++) {
+    len += rail.points[i]!.distanceTo(rail.points[i + 1]!);
+  }
+  return len;
+}
+
+/**
+ * Sample point + travel direction on a rail polyline.
+ * `distFromStart` is always arc length from points[0] toward the end.
+ * `sense` only flips the facing direction (+1 = toward end, -1 = toward start).
+ */
+export function sampleRail(
+  rail: RaceRail,
+  distFromStart: number,
+  sense: number,
+): { point: THREE.Vector3; dir: THREE.Vector3; done: boolean; dist: number } {
+  const total = railLength(rail);
+  const d = THREE.MathUtils.clamp(distFromStart, 0, total);
+
+  if (d <= 1e-6) {
+    const a = rail.points[0]!;
+    const b = rail.points[1] ?? a;
+    const dir = b.clone().sub(a);
+    if (dir.lengthSq() > 1e-8) dir.normalize();
+    else dir.set(0, 0, 1);
+    if (sense < 0) dir.negate();
+    return { point: a.clone(), dir, done: false, dist: 0 };
+  }
+  if (d >= total - 1e-6) {
+    const n = rail.points.length;
+    const a = rail.points[n - 2] ?? rail.points[0]!;
+    const b = rail.points[n - 1]!;
+    const dir = b.clone().sub(a);
+    if (dir.lengthSq() > 1e-8) dir.normalize();
+    else dir.set(0, 0, 1);
+    if (sense < 0) dir.negate();
+    return { point: b.clone(), dir, done: false, dist: total };
+  }
+
+  let acc = 0;
+  for (let i = 0; i < rail.points.length - 1; i++) {
+    const a = rail.points[i]!;
+    const b = rail.points[i + 1]!;
+    const segLen = a.distanceTo(b);
+    if (acc + segLen >= d) {
+      const t = (d - acc) / Math.max(1e-6, segLen);
+      const point = a.clone().lerp(b, t);
+      const dir = b.clone().sub(a);
+      if (dir.lengthSq() > 1e-8) dir.normalize();
+      else dir.set(0, 0, 1);
+      if (sense < 0) dir.negate();
+      return { point, dir, done: false, dist: d };
+    }
+    acc += segLen;
+  }
+  const last = rail.points[rail.points.length - 1]!;
+  return { point: last.clone(), dir: new THREE.Vector3(0, 0, 1), done: true, dist: total };
 }
 
 function placeRoadsideProps(

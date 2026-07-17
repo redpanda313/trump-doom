@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import type { Mats } from './materials';
-import { nearestOnPath } from './raceway';
+import { nearestOnPath, closestOnRail, railLength, sampleRail, type RaceRail } from './raceway';
 
 export const BOARD = {
   maxSpeed: 24,
@@ -92,14 +92,14 @@ export class Surfboard {
   sliding = false;
   /** -1..1 lean while grinding — tip too far to fall */
   grindBalance = 0;
-  /** 0..1 along current rail segment */
-  grindT = 0;
-  /** +1 or -1 travel sense on rail */
+  /** Distance traveled along current rail from its start (a-side) */
+  grindDist = 0;
+  /** +1 travel start→end, -1 travel end→start */
   grindSense = 1;
 
   private bobT = 0;
   private jumpBuffer = 0;
-  private grindRail: { a: THREE.Vector3; b: THREE.Vector3 } | null = null;
+  private grindRail: RaceRail | null = null;
   private prevPos = new THREE.Vector3();
   private stuckT = 0;
   private wasAirborne = false;
@@ -186,7 +186,7 @@ export class Surfboard {
     pathDist: number[],
     slideHeld: boolean,
     ramps: { pos: THREE.Vector3; yaw: number; len: number }[],
-    rails: { a: THREE.Vector3; b: THREE.Vector3 }[],
+    rails: RaceRail[],
     bumps: THREE.Vector3[],
   ) {
     this.bobT += dt;
@@ -404,92 +404,105 @@ export class Surfboard {
   }
 
   /**
-   * Mount a rail when near it and moving roughly along it.
-   * Uses physical t in [0,1] from a→b always (grindSense only flips travel direction).
+   * Mount a path-following rail polyline when near and aligned with travel.
    */
-  private tryEnterGrind(rails: { a: THREE.Vector3; b: THREE.Vector3 }[]) {
+  private tryEnterGrind(rails: RaceRail[]) {
     if (this.speed < BOARD.grindMinSpeed) return;
     if (this.grindCd > 0) return;
 
     const vel = new THREE.Vector3(Math.sin(this.velYaw), 0, Math.cos(this.velYaw));
     if (vel.lengthSq() < 1e-4) vel.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
 
+    let best: ReturnType<typeof closestOnRail> | null = null;
+    let bestRail: RaceRail | null = null;
+
     for (const rail of rails) {
-      const railDir = rail.b.clone().sub(rail.a);
-      const railLen = railDir.length();
-      if (railLen < 1.5) continue;
-      railDir.multiplyScalar(1 / railLen);
-
-      // Parametric position along a→b
-      const toP = this.position.clone().sub(rail.a);
-      const t = toP.dot(railDir) / railLen;
-      if (t < 0.04 || t > 0.96) continue; // don't catch at the very tips
-
-      const closest = rail.a.clone().addScaledVector(railDir, t * railLen);
-      const d = Math.hypot(this.position.x - closest.x, this.position.z - closest.z);
-      const dy = this.position.y - closest.y;
-      if (d > BOARD.grindCatchDist) continue;
+      if (!rail.points || rail.points.length < 2) continue;
+      const hit = closestOnRail(rail, this.position);
+      const dy = this.position.y - hit.point.y;
+      if (hit.dist > BOARD.grindCatchDist) continue;
       if (dy > BOARD.grindCatchHeight || dy < -1.4) continue;
 
-      let sense = 1;
-      let align = vel.dot(railDir);
-      if (align < 0) {
-        sense = -1;
-        align = -align;
+      // Avoid catching on the very tips (hard to leave)
+      const total = railLength(rail);
+      let distAlong = 0;
+      for (let i = 0; i < hit.seg; i++) {
+        distAlong += rail.points[i]!.distanceTo(rail.points[i + 1]!);
       }
-      const need = this.wasAirborne || this.vy < -0.5 ? BOARD.grindAlign * 0.55 : BOARD.grindAlign;
-      if (align < need) continue;
+      distAlong += hit.t * rail.points[hit.seg]!.distanceTo(rail.points[hit.seg + 1]!);
+      if (distAlong < 1.2 || distAlong > total - 1.2) continue;
 
-      this.grindRail = rail;
-      this.grindSense = sense;
-      this.grindT = t; // always 0..1 along a→b
-      this.grindBalance = (Math.random() - 0.5) * 0.15; // slight initial lean so HUD reacts
-      this.sliding = false;
-      this.slideCharge = 0;
-      this.surface = 'rail';
-      this.onGround = true;
-      this.vy = 0;
-      this.speed = Math.max(this.speed, BOARD.grindMinSpeed + 2);
-      this.position.copy(closest);
-      this.position.y = closest.y + 0.42;
-      const faceDir = railDir.clone().multiplyScalar(sense);
-      this.yaw = Math.atan2(faceDir.x, faceDir.z);
-      this.velYaw = this.yaw;
-      return;
+      let align = vel.dot(hit.dir);
+      const need = this.wasAirborne || this.vy < -0.5 ? BOARD.grindAlign * 0.5 : BOARD.grindAlign;
+      if (Math.abs(align) < need) continue;
+
+      if (!best || hit.dist < best.dist) {
+        best = hit;
+        bestRail = rail;
+      }
     }
+
+    if (!best || !bestRail) return;
+
+    let sense = 1;
+    let align = vel.dot(best.dir);
+    if (align < 0) sense = -1;
+
+    // Distance from start of polyline
+    let distAlong = 0;
+    for (let i = 0; i < best.seg; i++) {
+      distAlong += bestRail.points[i]!.distanceTo(bestRail.points[i + 1]!);
+    }
+    distAlong += best.t * bestRail.points[best.seg]!.distanceTo(bestRail.points[best.seg + 1]!);
+
+    this.grindRail = bestRail;
+    this.grindSense = sense;
+    this.grindDist = distAlong;
+    this.grindBalance = (Math.random() - 0.5) * 0.18;
+    this.sliding = false;
+    this.slideCharge = 0;
+    this.surface = 'rail';
+    this.onGround = true;
+    this.vy = 0;
+    this.speed = Math.max(this.speed, BOARD.grindMinSpeed + 2);
+    this.position.copy(best.point);
+    this.position.y = best.point.y + 0.42;
+    const face = best.dir.clone().multiplyScalar(sense);
+    this.yaw = Math.atan2(face.x, face.z);
+    this.velYaw = this.yaw;
   }
 
   /**
-   * Locked rail movement + balance. Returns whether still grinding.
+   * Locked movement along rail polyline + balance.
    */
   private tickGrind(dt: number, steer: number): boolean {
     const rail = this.grindRail;
-    if (!rail) return false;
-
-    const railDir = rail.b.clone().sub(rail.a);
-    const railLen = railDir.length();
-    if (railLen < 0.5) {
+    if (!rail || rail.points.length < 2) {
       this.exitGrind('fall');
       return false;
     }
-    railDir.multiplyScalar(1 / railLen);
-    const travel = railDir.clone().multiplyScalar(this.grindSense);
 
-    // Hold / build speed on rail
+    const total = railLength(rail);
+    if (total < 1) {
+      this.exitGrind('fall');
+      return false;
+    }
+
+    // Hold / build speed
     this.speed = Math.min(BOARD.maxSpeed * 1.06, Math.max(this.speed, 7) + 2.5 * dt);
     this.speedNorm = this.speed / BOARD.maxSpeed;
 
-    // Advance t along a→b in travel direction
-    const dtAlong = (this.speed * dt) / railLen;
-    this.grindT += this.grindSense * dtAlong;
+    // Advance distance along the polyline in travel sense
+    this.grindDist += this.grindSense * this.speed * dt;
 
-    // End of rail → launch at full speed past the tip (cooldown prevents re-catch)
-    if (this.grindT >= 1 || this.grindT <= 0) {
-      const atEnd = this.grindT >= 1;
-      this.position.copy(atEnd ? rail.b : rail.a);
-      this.position.addScaledVector(travel, 2.2); // clear the tip
+    // End of rail
+    if (this.grindDist >= total - 0.05 || this.grindDist <= 0.05) {
+      const tipDist = this.grindDist >= total / 2 ? total : 0;
+      const sample = sampleRail(rail, tipDist, this.grindSense);
+      this.position.copy(sample.point);
+      this.position.addScaledVector(sample.dir, 2.4);
       this.position.y += 0.5;
-      this.yaw = Math.atan2(travel.x, travel.z);
+      this.yaw = Math.atan2(sample.dir.x, sample.dir.z);
       this.velYaw = this.yaw;
       this.speed = Math.min(BOARD.maxSpeed, Math.max(this.speed, 14) + 3);
       this.vy = 2.5;
@@ -499,28 +512,28 @@ export class Surfboard {
       return false;
     }
 
-    // Lock to rail
-    this.position.copy(rail.a).addScaledVector(railDir, this.grindT * railLen);
-    this.position.y = THREE.MathUtils.lerp(rail.a.y, rail.b.y, this.grindT) + 0.42;
-    this.yaw = Math.atan2(travel.x, travel.z);
+    // Lock to polyline (matches yellow bars exactly)
+    const sample = sampleRail(rail, this.grindDist, this.grindSense);
+    this.position.copy(sample.point);
+    this.position.y = sample.point.y + 0.42;
+    this.yaw = Math.atan2(sample.dir.x, sample.dir.z);
     this.velYaw = this.yaw;
     this.onGround = true;
     this.vy = 0;
     this.surface = 'rail';
 
-    // Balance: instability pushes off-center; A/D counters (steer -1 left, +1 right)
+    // Balance
     const wobble =
       Math.sin(this.bobT * 3.8) * 0.7 +
       Math.sin(this.bobT * 7.3) * 0.45 +
       Math.sin(this.bobT * 11.1) * 0.25;
-    // Push away from zero so you must actively balance
     const bias = Math.sign(this.grindBalance || wobble) * (0.35 + this.speedNorm * 0.4);
     this.grindBalance += (wobble + bias) * BOARD.grindWobble * dt;
     this.grindBalance += steer * BOARD.grindBalanceSteer * dt;
     this.grindBalance = THREE.MathUtils.clamp(this.grindBalance, -1.2, 1.2);
 
     if (Math.abs(this.grindBalance) >= BOARD.grindTipLimit) {
-      const side = new THREE.Vector3(travel.z, 0, -travel.x);
+      const side = new THREE.Vector3(sample.dir.z, 0, -sample.dir.x);
       const fallDir = Math.sign(this.grindBalance) || 1;
       this.position.addScaledVector(side, fallDir * 1.8);
       this.position.y += 0.2;
@@ -540,7 +553,7 @@ export class Surfboard {
   private exitGrind(_reason: 'jump' | 'end' | 'fall' | 'clear') {
     this.grindRail = null;
     this.grindBalance = 0;
-    this.grindT = 0;
+    this.grindDist = 0;
     this.grindCd = BOARD.grindCooldown;
     if (this.surface === 'rail') this.surface = 'road';
   }
