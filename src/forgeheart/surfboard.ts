@@ -14,10 +14,10 @@ import type { Mats } from './materials';
 import { nearestOnPath } from './raceway';
 
 export const BOARD = {
-  maxSpeed: 22,
-  accel: 15,
+  maxSpeed: 24,
+  accel: 18,
   brake: 18,
-  drag: 1.6,
+  drag: 1.2,
   /** Yaw rate rad/s at low speed full bank */
   turnRateSlow: 2.5,
   /** Yaw rate at max speed (normal grip) */
@@ -51,16 +51,13 @@ export const BOARD = {
   camTipAccel: -0.12,
   camTipBrake: 0.14,
   offPathLimit: 32,
-  /** Collision — buildings off-road only; slide along, never kill progress */
-  bumpRadius: 1.1,
-  bumpKeepForward: 0.94,
+  /** Soft circle bumps — glance off, never drain speed when free */
+  bumpRadius: 1.25,
   grindSpeedMul: 1.08,
   grindSnap: 10,
-  /** Must be this close to start a grind (was too sticky) */
   grindCatch: 1.05,
   grindHold: 1.85,
-  /** If blocked, keep this fraction of path-forward motion */
-  stuckNudge: 6,
+  stuckNudge: 8,
 } as const;
 
 export type BoardSurface = 'air' | 'road' | 'ramp' | 'rail';
@@ -398,45 +395,50 @@ export class Surfboard {
   }
 
   /**
-   * Circle vs building centers. Push out of penetration, then project velocity
-   * so only the into-wall component is removed — path-forward progress remains.
+   * Soft circle bumps. Only runs when actually overlapping something.
+   * Important: do NOT rewrite speed when free of obstacles (that was draining
+   * speed every frame and felt like mud).
    */
   private resolveBumps(bumps: THREE.Vector3[], pathYaw: number, _dt: number) {
-    const r = BOARD.bumpRadius + 1.35;
+    const r = BOARD.bumpRadius + 1.5;
     let vx = Math.sin(this.velYaw) * this.speed;
     let vz = Math.cos(this.velYaw) * this.speed;
     const pathFwdX = Math.sin(pathYaw);
     const pathFwdZ = Math.cos(pathYaw);
+    let hit = false;
 
     for (const b of bumps) {
       const dx = this.position.x - b.x;
       const dz = this.position.z - b.z;
       const dist = Math.hypot(dx, dz);
       if (dist >= r || dist < 1e-5) continue;
+      hit = true;
 
       const nx = dx / dist;
       const nz = dz / dist;
-      // Separate
+      // Separate out of overlap
       const pen = r - dist;
-      this.position.x += nx * pen;
-      this.position.z += nz * pen;
+      this.position.x += nx * (pen + 0.02);
+      this.position.z += nz * (pen + 0.02);
 
-      // Remove velocity into the obstacle (N points from obstacle → player)
-      const into = vx * nx + vz * nz; // negative if moving into obstacle
+      // Strip only the into-wall component of velocity (N = obstacle → player)
+      const into = vx * nx + vz * nz;
       if (into < 0) {
         vx -= into * nx;
         vz -= into * nz;
       }
-      // Nudge along path so a wall corner never fully stops you
-      const along = Math.max(0, this.speed * 0.35);
-      vx += pathFwdX * along * 0.15;
-      vz += pathFwdZ * along * 0.15;
+      // Keep progress: add a little along the road so corners never pin you
+      vx += pathFwdX * this.speed * 0.08;
+      vz += pathFwdZ * this.speed * 0.08;
     }
+
+    if (!hit) return; // free road — leave speed/heading alone
 
     const sp = Math.hypot(vx, vz);
     if (sp > 0.05) {
       this.velYaw = Math.atan2(vx, vz);
-      this.speed = Math.min(BOARD.maxSpeed, Math.max(sp * BOARD.bumpKeepForward, this.speed * 0.85));
+      // Preserve almost all speed on a glance
+      this.speed = Math.min(BOARD.maxSpeed, Math.max(this.speed * 0.92, sp));
     }
   }
 

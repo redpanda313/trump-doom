@@ -235,9 +235,9 @@ export function buildSkyRaceway(): RacewayBuilt {
       placeFountain(group, mats, mid, dir, zc.accent);
     }
 
-    // Traffic — floating cars/trucks
+    // Traffic — floating cars/trucks (mostly visual/whoosh; sparse soft bumps)
     if (i % 9 === 3) {
-      placeVehicle(group, mats, mid, dir, yaw, i, whooshPoints);
+      placeVehicle(group, mats, mid, dir, yaw, i, whooshPoints, bumpPoints);
     }
 
     // Boost ramps
@@ -425,8 +425,8 @@ function placeRoadsideProps(
 ) {
   const right = new THREE.Vector3(dir.z, 0, -dir.x);
   for (const side of [-1, 1] as const) {
-    // Well clear of the 10u roadway so bumps never sit on the racing line
-    const dist = ROAD_W / 2 + SIDE_W + 4.2 + (seed % 5) * 0.35;
+    // Close to the road for bump contact (sidewalk edge), not in the center lane
+    const dist = ROAD_W / 2 + SIDE_W + 1.6 + (seed % 5) * 0.25;
     const base = mid.clone().addScaledVector(right, side * dist);
     base.y = mid.y;
 
@@ -597,12 +597,13 @@ function placeVehicle(
   yaw: number,
   seed: number,
   whoosh: THREE.Vector3[],
+  bumps: THREE.Vector3[],
 ) {
-  // Park on the shoulder — never on the racing line (was ±2.2 and blocked the board)
-  const lane = (seed % 2 === 0 ? -1 : 1) * (ROAD_W / 2 + SIDE_W * 0.55);
+  // Near-center lanes for traffic feel; every car is a soft glance bump
+  const lane = seed % 2 === 0 ? -2.4 : 2.4;
   const right = new THREE.Vector3(dir.z, 0, -dir.x);
   const pos = mid.clone().addScaledVector(right, lane);
-  pos.y = mid.y + 1.15 + Math.sin(seed) * 0.15;
+  pos.y = mid.y + 0.95 + Math.sin(seed) * 0.12;
   const truck = seed % 3 === 0;
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(truck ? 2.2 : 1.6, truck ? 1.4 : 0.9, truck ? 4.5 : 3.2),
@@ -622,8 +623,8 @@ function placeVehicle(
   cabin.position.set(pos.x, pos.y + 0.7, pos.z);
   cabin.rotation.y = yaw;
   group.add(cabin);
-  // Whoosh only — not a hard bump
   whoosh.push(pos.clone());
+  bumps.push(pos.clone());
 }
 
 /** Nearest point on path + heading for board snap / AI. */
