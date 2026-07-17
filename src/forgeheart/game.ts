@@ -24,7 +24,8 @@ import {
 } from './robot';
 import { ForgeAudio } from './audio';
 import { buildSkyRaceway, nearestOnPath, type RacewayBuilt } from './raceway';
-import { Surfboard, FollowerBoard, BOARD } from './surfboard';
+import { Surfboard, BOARD } from './surfboard';
+import { EliasCompanion } from './eliasCompanion';
 import {
   writeSlot,
   emptySave,
@@ -122,7 +123,7 @@ export class ForgeHeartGame {
   // ——— Race / surfboard ———
   private raceway: RacewayBuilt | null = null;
   private board: Surfboard | null = null;
-  private eliasBoard: FollowerBoard | null = null;
+  private elias: EliasCompanion | null = null;
   private raceActive = false;
   private raceFinished = false;
   private checkpointIdx = 0;
@@ -1432,10 +1433,8 @@ export class ForgeHeartGame {
     this.scene.add(this.board.mesh);
 
     if (this.bringEliasToRace) {
-      this.eliasBoard = new FollowerBoard(this.raceway.mats);
-      this.eliasBoard.position.copy(this.raceway.boardSpawn).add(new THREE.Vector3(-2, 0, -3));
-      this.eliasBoard.mesh.position.copy(this.eliasBoard.position);
-      this.scene.add(this.eliasBoard.mesh);
+      const eliasSpawn = this.raceway.boardSpawn.clone().add(new THREE.Vector3(-2.2, 0, -2.5));
+      this.elias = new EliasCompanion(this.scene, this.raceway.mats, eliasSpawn);
     }
 
     this.scene.background = new THREE.Color(0x6a90b0);
@@ -1544,11 +1543,15 @@ export class ForgeHeartGame {
         this.respawnAtCheckpoint(true);
       }
       this.audio.setWind(0.4);
-      if (this.eliasBoard) {
-        const wait = this.board.position.clone().add(new THREE.Vector3(-2, 0, -2));
-        this.eliasBoard.position.lerp(wait, 1 - Math.exp(-3 * dt));
-        this.eliasBoard.mesh.position.copy(this.eliasBoard.position);
-        this.eliasBoard.mesh.position.y += 0.1;
+      if (this.elias) {
+        this.elias.update(
+          dt,
+          false,
+          null,
+          this.camera.position,
+          this.raceway.path,
+          this.raceway.pathDist,
+        );
       }
       return;
     }
@@ -1575,7 +1578,16 @@ export class ForgeHeartGame {
       this.raceway.bumpPoints,
     );
 
-    if (this.eliasBoard) this.eliasBoard.follow(this.board, dt);
+    if (this.elias) {
+      this.elias.update(
+        dt,
+        true,
+        this.board,
+        this.camera.position,
+        this.raceway.path,
+        this.raceway.pathDist,
+      );
+    }
 
     // Camera: FOV + blur always; first person sits on deck, third chases
     const sn = this.board.speedNorm;

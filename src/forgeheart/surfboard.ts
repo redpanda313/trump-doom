@@ -682,50 +682,6 @@ interface GrindSpark {
   life: number;
 }
 
-/** Follow-board for Elias (visual + simple chase). */
-export class FollowerBoard {
-  mesh: THREE.Group;
-  position = new THREE.Vector3();
-  yaw = 0;
-
-  constructor(mats: Mats) {
-    this.mesh = buildBoardMesh(mats);
-    // Tint rails green for Elias
-    this.mesh.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) {
-        const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
-        if (m?.emissive) {
-          // leave keel; scale deck slightly
-        }
-      }
-    });
-    const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15, 8, 8),
-      new THREE.MeshStandardMaterial({
-        color: 0x44ff88,
-        emissive: 0x22aa44,
-        emissiveIntensity: 0.8,
-      }),
-    );
-    marker.position.set(0, 0.85, 0);
-    this.mesh.add(marker);
-  }
-
-  /** Trail behind leader */
-  follow(leader: Surfboard, dt: number) {
-    const back = new THREE.Vector3(-Math.sin(leader.yaw), 0, -Math.cos(leader.yaw));
-    const target = leader.position.clone().addScaledVector(back, 4.5);
-    target.y = leader.position.y;
-    this.position.lerp(target, 1 - Math.exp(-5 * dt));
-    this.yaw = dampAngle(this.yaw, leader.yaw, 6, dt);
-    this.mesh.position.copy(this.position);
-    this.mesh.position.y += Math.sin(performance.now() * 0.004) * 0.08;
-    this.mesh.rotation.order = 'YXZ';
-    this.mesh.rotation.y = this.yaw;
-    this.mesh.rotation.z = leader.bank * 0.7;
-  }
-}
-
 function dampAngle(current: number, target: number, lambda: number, dt: number): number {
   let diff = target - current;
   while (diff > Math.PI) diff -= Math.PI * 2;
