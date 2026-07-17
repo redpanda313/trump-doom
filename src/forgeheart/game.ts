@@ -23,6 +23,8 @@ import {
   ROBOT,
 } from './robot';
 import { ForgeAudio } from './audio';
+import { buildSkyRaceway, nearestOnPath, type RacewayBuilt } from './raceway';
+import { Surfboard, BOARD } from './surfboard';
 
 const GRAVITY = 28;
 const MOVE_SPEED = 7;
@@ -37,7 +39,8 @@ type TutorialPhase =
   | 'siege' // ally online, demons banging
   | 'breach' // door open, fight 2 demons
   | 'escape' // get to the boat
-  | 'won';
+  | 'won'
+  | 'race'; // sky city surfboard leg
 
 export class ForgeHeartGame {
   private renderer: THREE.WebGLRenderer;
@@ -102,6 +105,16 @@ export class ForgeHeartGame {
   private hadAllyOnce = false;
   private objective = 'Read the lab. Wake Elias with the Hand (1) — do not scrap him.';
 
+  // ——— Race / surfboard ———
+  private raceway: RacewayBuilt | null = null;
+  private board: Surfboard | null = null;
+  private raceActive = false;
+  private raceFinished = false;
+  private checkpointIdx = 0;
+  private speedBlurEl: HTMLElement | null = null;
+  private camPitchOffset = 0;
+  private whooshCursor = 0;
+
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -162,6 +175,7 @@ export class ForgeHeartGame {
     this.toastEl = document.getElementById('plaque-toast')!;
     this.convertEl = document.getElementById('convert-toast')!;
     this.helpEl = document.querySelector('.help-line');
+    this.speedBlurEl = document.getElementById('speed-blur');
     const face = document.getElementById('resolve-face');
     if (face) face.textContent = '⚙️';
     document.querySelectorAll('.hud-bar .label').forEach((el) => {
@@ -176,21 +190,33 @@ export class ForgeHeartGame {
 
   private bindInput() {
     window.addEventListener('keydown', (e) => {
+      const wasDown = this.keys.has(e.code);
       this.keys.add(e.code);
       if (e.code === 'Space') e.preventDefault();
-      if (e.code === 'Digit1') this.weapon = 'hand';
-      if (e.code === 'Digit2') {
+      if (e.code === 'Digit1' && !this.board?.mounted) this.weapon = 'hand';
+      if (e.code === 'Digit2' && !this.board?.mounted) {
         if (this.wrenchUnlocked) this.weapon = 'wrench';
         else this.toast('Arc wrench is on the wall rack — claim it when the door fails.');
       }
       if (e.code === 'KeyE') this.tryInteract();
+      // Surfboard double-tap powerslide
+      if (this.board?.mounted && !wasDown) {
+        if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.board.onSteerTap(-1);
+        if (e.code === 'KeyD' || e.code === 'ArrowRight') this.board.onSteerTap(1);
+      }
       if (e.code === 'Escape') {
         this.paused = !this.paused;
         if (this.paused) this.controls.unlock();
         else this.canvas.requestPointerLock();
       }
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      if (this.board?.mounted) {
+        if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.board.onSteerRelease(-1);
+        if (e.code === 'KeyD' || e.code === 'ArrowRight') this.board.onSteerRelease(1);
+      }
+    });
     this.canvas.addEventListener('click', () => {
       if (!this.paused) this.controls.lock();
     });
@@ -225,72 +251,90 @@ export class ForgeHeartGame {
     this.msgT -= dt;
     this.atkCd = Math.max(0, this.atkCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
-    this.tickAllyPower(dt);
-    this.tickTutorial(dt);
-    this.updateInteractPrompts();
-    // Wind swells when outside the lab door (z past ~8)
-    const outdoor = Math.max(0, Math.min(1, (this.camera.position.z - 7.5) / 6));
-    this.audio.setWind(outdoor);
+    this.audio.tickWhooshCd(dt);
 
-    // Movement relative to camera yaw
-    const forward = new THREE.Vector3();
-    this.camera.getWorldDirection(forward);
-    forward.y = 0;
-    forward.normalize();
-    const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+    if (this.raceActive) {
+      this.tickRace(dt);
+    } else {
+      this.tickAllyPower(dt);
+      this.tickTutorial(dt);
+      this.updateInteractPrompts();
+      // Wind swells when outside the lab door (z past ~8)
+      const outdoor = Math.max(0, Math.min(1, (this.camera.position.z - 7.5) / 6));
+      this.audio.setWind(outdoor);
 
-    const wish = new THREE.Vector3();
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) wish.add(forward);
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) wish.sub(forward);
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) wish.add(right);
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) wish.sub(right);
-    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(MOVE_SPEED);
+      // Movement relative to camera yaw
+      const forward = new THREE.Vector3();
+      this.camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-    this.velocity.x = wish.x;
-    this.velocity.z = wish.z;
-    this.velocity.y -= GRAVITY * dt;
+      const wish = new THREE.Vector3();
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) wish.add(forward);
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) wish.sub(forward);
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) wish.add(right);
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) wish.sub(right);
+      if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(MOVE_SPEED);
 
-    if ((this.keys.has('Space') || this.keys.has('KeyJ')) && this.onGround) {
-      this.velocity.y = JUMP_VEL;
-      this.onGround = false;
+      this.velocity.x = wish.x;
+      this.velocity.z = wish.z;
+      this.velocity.y -= GRAVITY * dt;
+
+      if ((this.keys.has('Space') || this.keys.has('KeyJ')) && this.onGround) {
+        this.velocity.y = JUMP_VEL;
+        this.onGround = false;
+      }
+
+      this.moveWithCollision(dt);
+
+      if (this.fireHeld || this.keys.has('ControlLeft')) this.tryFire();
+
+      this.updateRobots(dt);
+      this.updateBolts(dt);
+      this.updateBlasts(dt);
+      this.updateArcVisual(dt);
+      this.checkExit();
     }
-
-    this.moveWithCollision(dt);
-
-    if (this.fireHeld || this.keys.has('ControlLeft')) this.tryFire();
-
-    this.updateRobots(dt);
-    this.updateBolts(dt);
-    this.updateBlasts(dt);
-    this.updateArcVisual(dt);
-    this.checkExit();
 
     // HUD
     this.hpFill.style.width = `${this.health}%`;
     this.plasmaFill.style.width = `${this.plasma}%`;
     const pct = document.getElementById('resolve-pct');
     if (pct) pct.textContent = String(Math.round(this.health));
-    this.weaponEl.textContent =
-      this.weapon === 'hand'
-        ? 'REPROGRAM HAND'
-        : this.wrenchUnlocked
-          ? 'ARC WRENCH'
-          : 'HAND ONLY';
-    const allies = this.countPoweredAllies();
-    const eq = this.plasmaEquilibrium(allies);
-    const net = this.plasmaNetPerSec(allies);
-    const nearEq = Math.abs(this.plasma - eq) < 1.5;
-    const rateLabel =
-      allies === 0
-        ? 'PLASMA STEADY'
-        : nearEq
-          ? `EQ ${eq}%`
-          : `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s →${eq}%`;
-    this.statsEl.textContent = `${this.objective} · ${rateLabel}`;
-    if (this.locEl) {
-      const z = this.camera.position.z;
-      this.locEl.textContent =
-        z > 9 ? 'Sky Docks · Escape' : 'Voss Workshop · Tutorial';
+    if (this.raceActive && this.board?.mounted) {
+      const sp = Math.round(this.board.speed);
+      const max = BOARD.maxSpeed;
+      this.weaponEl.textContent = this.board.isPowersliding() ? 'POWERSLIDE' : 'SKY SURF';
+      this.statsEl.textContent = `${this.objective} · ${sp}/${max} u/s`;
+      if (this.locEl) this.locEl.textContent = 'Sky City · Racetrack';
+    } else if (this.raceActive) {
+      this.weaponEl.textContent = 'APPROACH BOARD';
+      this.statsEl.textContent = this.objective;
+      if (this.locEl) this.locEl.textContent = 'Sky City · Boarding';
+    } else {
+      this.weaponEl.textContent =
+        this.weapon === 'hand'
+          ? 'REPROGRAM HAND'
+          : this.wrenchUnlocked
+            ? 'ARC WRENCH'
+            : 'HAND ONLY';
+      const allies = this.countPoweredAllies();
+      const eq = this.plasmaEquilibrium(allies);
+      const net = this.plasmaNetPerSec(allies);
+      const nearEq = Math.abs(this.plasma - eq) < 1.5;
+      const rateLabel =
+        allies === 0
+          ? 'PLASMA STEADY'
+          : nearEq
+            ? `EQ ${eq}%`
+            : `${net >= 0 ? '+' : ''}${net.toFixed(1)}/s →${eq}%`;
+      this.statsEl.textContent = `${this.objective} · ${rateLabel}`;
+      if (this.locEl) {
+        const z = this.camera.position.z;
+        this.locEl.textContent =
+          z > 9 ? 'Sky Docks · Escape' : 'Voss Workshop · Tutorial';
+      }
     }
 
     if (this.msgT > 0) {
@@ -1010,6 +1054,10 @@ export class ForgeHeartGame {
   private updateArcVisual(_dt: number) {}
 
   private tryInteract() {
+    if (this.raceActive) {
+      this.tryBoardInteract();
+      return;
+    }
     const pos = this.camera.position;
 
     // Priority: world interactables near crosshair/proximity
@@ -1148,16 +1196,250 @@ export class ForgeHeartGame {
     if (this.won) return;
     this.won = true;
     this.tutorial = 'won';
-    this.objective = 'Tutorial complete';
+    this.objective = 'Tutorial complete — sky surf awaits';
     this.audio.setTension(0);
     this.audio.playWin();
     this.flash('SKIFF AWAY — Elias is with you');
     this.toast(
-      'You cast off into the floating city. Demons hunt soul-frames. Your brother’s eyes stay green. The work is only beginning.',
-      10,
+      'Casting off… a plasma surfboard waits in the sky city. Board it to ride the racetrack.',
+      5,
     );
-    this.setHelp('Tutorial complete — refresh to play again');
-    this.controls.unlock();
+    this.setHelp('Loading sky racetrack…');
+    window.setTimeout(() => this.enterRaceway(), 2800);
+  }
+
+  /** Tear down workshop, load sky city racetrack + surfboard. */
+  private enterRaceway() {
+    // Remove tutorial world
+    this.scene.remove(this.level.group);
+    for (const r of this.robots) this.scene.remove(r.mesh);
+    for (const h of this.husks) this.scene.remove(h);
+    for (const b of this.bolts) this.scene.remove(b.mesh);
+    for (const bl of this.blasts) this.scene.remove(bl);
+    this.robots = [];
+    this.husks = [];
+    this.bolts = [];
+    this.blasts = [];
+    this.interactables = [];
+
+    this.raceway = buildSkyRaceway();
+    this.scene.add(this.raceway.group);
+    this.colliders = [...this.raceway.colliders];
+    this.board = new Surfboard(this.raceway.mats, this.raceway.boardSpawn, this.raceway.boardYaw);
+    this.scene.add(this.board.mesh);
+
+    // Place player near board on start plaza
+    const spawn = this.raceway.boardSpawn.clone();
+    spawn.x += 2.5;
+    spawn.y += PLAYER_H * 0.9;
+    this.camera.position.copy(spawn);
+    this.safePos.copy(spawn);
+    this.velocity.set(0, 0, 0);
+
+    this.scene.background = new THREE.Color(0x6a90b0);
+    this.scene.fog = new THREE.Fog(0x8aabcc, 40, 180);
+
+    this.raceActive = true;
+    this.raceFinished = false;
+    this.checkpointIdx = 0;
+    this.tutorial = 'race';
+    this.won = false;
+    this.objective = 'Approach the humming surfboard · press E to board';
+    this.setHelp('E board · W accel · S brake · A/D bank · double-tap A/D powerslide · E dismount when slow');
+    this.flash('SKY CITY RACETRACK');
+    this.toast(
+      'A long living roadway through floating districts. Board the plasma surfboard — ride to the golden finish.',
+      7,
+    );
+    this.audio.setWind(0.35);
+    this.controls.lock();
+  }
+
+  private tickRace(dt: number) {
+    if (!this.raceway || !this.board) return;
+
+    // Idle board bob + hum when nearby
+    this.board.tickIdle(dt);
+    const nearBoard =
+      !this.board.mounted &&
+      this.camera.position.distanceTo(this.board.position) < 8;
+    if (!this.board.mounted) {
+      this.audio.setBoardAudio(nearBoard ? 1 : 0.15, 0);
+      // Foot movement near board
+      const forward = new THREE.Vector3();
+      this.camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const wish = new THREE.Vector3();
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) wish.add(forward);
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) wish.sub(forward);
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) wish.add(right);
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) wish.sub(right);
+      if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(MOVE_SPEED);
+      this.velocity.x = wish.x;
+      this.velocity.z = wish.z;
+      this.velocity.y -= GRAVITY * dt;
+      if ((this.keys.has('Space') || this.keys.has('KeyJ')) && this.onGround) {
+        this.velocity.y = JUMP_VEL;
+        this.onGround = false;
+      }
+      this.moveWithCollision(dt);
+      this.audio.setWind(0.4);
+      this.applySpeedFx(0, 0);
+      return;
+    }
+
+    // ——— Mounted ———
+    let accel = 0;
+    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) accel += 1;
+    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) accel -= 1;
+    let steer = 0;
+    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) steer -= 1;
+    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) steer += 1;
+
+    this.board.tick(dt, accel, steer, this.raceway.path, this.raceway.pathDist);
+
+    // Chase camera: behind board, banked, FOV rush
+    const sn = this.board.speedNorm;
+    const targetFov = THREE.MathUtils.lerp(BOARD.fovBase, BOARD.fovFast, sn * sn);
+    this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 5, dt);
+    this.camera.updateProjectionMatrix();
+
+    const tipTarget =
+      accel > 0.2 ? BOARD.camTipAccel * (0.5 + sn) : accel < -0.2 ? BOARD.camTipBrake : 0;
+    this.camPitchOffset = THREE.MathUtils.damp(this.camPitchOffset, tipTarget, 6, dt);
+
+    const back = new THREE.Vector3(-Math.sin(this.board.yaw), 0, -Math.cos(this.board.yaw));
+    const camDist = 5.2 + sn * 1.4;
+    const camHeight = 2.1 + sn * 0.35;
+    const ideal = this.board.position
+      .clone()
+      .addScaledVector(back, camDist)
+      .add(new THREE.Vector3(0, camHeight, 0));
+    // Powerslide: swing camera wider to the slide side
+    if (this.board.isPowersliding()) {
+      const right = new THREE.Vector3(Math.cos(this.board.yaw), 0, -Math.sin(this.board.yaw));
+      ideal.addScaledVector(right, this.board.bank * 2.2);
+    }
+    this.camera.position.lerp(ideal, 1 - Math.exp(-8 * dt));
+
+    const look = this.board.position.clone().add(new THREE.Vector3(0, 0.6, 0));
+    look.y += this.camPitchOffset * 8;
+    this.camera.up.set(Math.sin(this.board.bank) * 0.35, 1, 0).normalize();
+    this.camera.lookAt(look);
+
+    this.audio.setBoardAudio(0.2, sn);
+    this.audio.setWind(0.25 + sn * 0.75);
+    this.applySpeedFx(sn, accel);
+
+    // Pass-by whooshes
+    this.tickWhooshes(dt);
+
+    // Progress / finish
+    const near = nearestOnPath(this.raceway.path, this.raceway.pathDist, this.board.position);
+    const pct = Math.min(99, Math.floor((near.dist / this.raceway.totalLength) * 100));
+    this.objective = this.raceFinished
+      ? 'Racetrack complete!'
+      : `Sky road · ${pct}% · CP ${this.checkpointIdx}/${this.raceway.checkpoints.length}`;
+
+    // Checkpoints
+    if (!this.raceFinished && this.checkpointIdx < this.raceway.checkpoints.length) {
+      const cp = this.raceway.checkpoints[this.checkpointIdx]!;
+      if (this.board.position.distanceTo(cp.position) < 18) {
+        this.checkpointIdx++;
+        this.audio.playPickup();
+        if (this.checkpointIdx < this.raceway.checkpoints.length) {
+          this.toast(`Checkpoint ${this.checkpointIdx}`, 1.5);
+        }
+      }
+    }
+
+    if (!this.raceFinished && this.board.position.distanceTo(this.raceway.finishPos) < 14) {
+      this.finishRace();
+    }
+  }
+
+  private applySpeedFx(speedNorm: number, accel: number) {
+    if (!this.speedBlurEl) return;
+    const rush = Math.max(speedNorm, accel > 0 ? speedNorm * 0.5 : 0);
+    if (rush > 0.2) {
+      this.speedBlurEl.classList.remove('hidden');
+      this.speedBlurEl.classList.add('active');
+      const blurPx = Math.floor(rush * rush * 10);
+      this.speedBlurEl.style.opacity = String(Math.min(1, rush * 1.1));
+      this.speedBlurEl.style.backdropFilter = `blur(${blurPx}px)`;
+      (this.speedBlurEl.style as CSSStyleDeclaration & { webkitBackdropFilter?: string }).webkitBackdropFilter =
+        `blur(${blurPx}px)`;
+    } else {
+      this.speedBlurEl.classList.remove('active');
+      this.speedBlurEl.style.opacity = '0';
+      if (rush <= 0.05) this.speedBlurEl.classList.add('hidden');
+    }
+  }
+
+  private tickWhooshes(_dt: number) {
+    if (!this.raceway || !this.board || this.board.speedNorm < 0.35) return;
+    const pos = this.board.position;
+    // Scan a window of whoosh points
+    const pts = this.raceway.whooshPoints;
+    if (pts.length === 0) return;
+    for (let k = 0; k < 12; k++) {
+      const i = (this.whooshCursor + k) % pts.length;
+      const p = pts[i]!;
+      const d = pos.distanceTo(p);
+      if (d < 7 + this.board.speedNorm * 4) {
+        this.audio.playPassWhoosh(0.5 + this.board.speedNorm * 0.6);
+        this.whooshCursor = (i + 1) % pts.length;
+        break;
+      }
+    }
+    this.whooshCursor = (this.whooshCursor + 1) % pts.length;
+  }
+
+  private finishRace() {
+    this.raceFinished = true;
+    this.objective = 'Racetrack complete!';
+    this.audio.playWin();
+    this.flash('FINISH — Sky City run complete');
+    this.toast(
+      'You carved a line through brass districts and cloud parks. Elias would have loved this wind.',
+      8,
+    );
+    this.setHelp('E to dismount · refresh to replay from tutorial');
+  }
+
+  private tryBoardInteract() {
+    if (!this.board || !this.raceway) return false;
+    if (this.board.mounted) {
+      // Dismount only when slow
+      if (this.board.speed > 5) {
+        this.toast('Slow down to dismount (S).');
+        return true;
+      }
+      const pos = this.board.dismount();
+      this.camera.position.copy(pos);
+      this.camera.fov = BOARD.fovBase;
+      this.camera.updateProjectionMatrix();
+      this.camera.up.set(0, 1, 0);
+      this.applySpeedFx(0, 0);
+      this.audio.setBoardAudio(0.5, 0);
+      this.flash('Dismounted');
+      this.objective = this.raceFinished
+        ? 'Racetrack complete · board again with E'
+        : 'Board again with E · or explore on foot';
+      return true;
+    }
+    if (this.camera.position.distanceTo(this.board.position) < 2.8) {
+      this.board.mount();
+      this.audio.playPickup();
+      this.flash('BOARDED — W to soar');
+      this.toast('W accelerate · S slow · A/D bank · double-tap A/D powerslide · release to boost-turn', 6);
+      this.setHelp('W accel · S brake · A/D lean · double-tap A/D powerslide · E dismount (slow)');
+      this.objective = 'Ride the sky road to the golden finish gate';
+      return true;
+    }
+    return false;
   }
 
   private updateRobots(dt: number) {

@@ -11,11 +11,20 @@ export class ForgeAudio {
   private windGain: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windSource: AudioBufferSourceNode | null = null;
+  private boardHumGain: GainNode | null = null;
+  private boardHumOsc: OscillatorNode | null = null;
+  private boardHumOsc2: OscillatorNode | null = null;
+  private boardRushGain: GainNode | null = null;
+  private boardRushFilter: BiquadFilterNode | null = null;
+  private boardRushSource: AudioBufferSourceNode | null = null;
+  private boardJetGain: GainNode | null = null;
+  private boardJetOsc: OscillatorNode | null = null;
   private musicTimer: number | null = null;
   private step = 0;
   private tension = 0; // 0 calm lab · 1 siege
   /** 0 indoor · 1 full outdoor wind */
   private windAmount = 0;
+  private whooshCd = 0;
   enabled = false;
 
   async resume() {
@@ -39,10 +48,140 @@ export class ForgeAudio {
       this.windFilter.connect(this.windGain);
       this.windGain.connect(this.master);
       this.startWindLoop();
+      this.initBoardAudio();
     }
     if (this.ctx.state === 'suspended') await this.ctx.resume();
     this.enabled = true;
     this.ensureMusic();
+  }
+
+  private initBoardAudio() {
+    if (!this.ctx || !this.master) return;
+    // Gentle idle hum-hum-hum
+    this.boardHumGain = this.ctx.createGain();
+    this.boardHumGain.gain.value = 0;
+    this.boardHumGain.connect(this.master);
+    this.boardHumOsc = this.ctx.createOscillator();
+    this.boardHumOsc.type = 'sine';
+    this.boardHumOsc.frequency.value = 92;
+    this.boardHumOsc2 = this.ctx.createOscillator();
+    this.boardHumOsc2.type = 'triangle';
+    this.boardHumOsc2.frequency.value = 138;
+    const humFilter = this.ctx.createBiquadFilter();
+    humFilter.type = 'lowpass';
+    humFilter.frequency.value = 400;
+    this.boardHumOsc.connect(humFilter);
+    this.boardHumOsc2.connect(humFilter);
+    humFilter.connect(this.boardHumGain);
+    this.boardHumOsc.start();
+    this.boardHumOsc2.start();
+
+    // Rushing wind with speed
+    this.boardRushGain = this.ctx.createGain();
+    this.boardRushGain.gain.value = 0;
+    this.boardRushFilter = this.ctx.createBiquadFilter();
+    this.boardRushFilter.type = 'bandpass';
+    this.boardRushFilter.frequency.value = 800;
+    this.boardRushFilter.Q.value = 0.5;
+    this.boardRushFilter.connect(this.boardRushGain);
+    this.boardRushGain.connect(this.master);
+    const sec = 3;
+    const n = Math.floor(this.ctx.sampleRate * sec);
+    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let b0 = 0;
+    for (let i = 0; i < n; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = (b0 + 0.02 * white) / 1.02;
+      data[i] = b0 * 3.5;
+    }
+    this.boardRushSource = this.ctx.createBufferSource();
+    this.boardRushSource.buffer = buf;
+    this.boardRushSource.loop = true;
+    this.boardRushSource.connect(this.boardRushFilter);
+    this.boardRushSource.start();
+
+    // Top-speed sweet jet
+    this.boardJetGain = this.ctx.createGain();
+    this.boardJetGain.gain.value = 0;
+    this.boardJetGain.connect(this.master);
+    this.boardJetOsc = this.ctx.createOscillator();
+    this.boardJetOsc.type = 'sawtooth';
+    this.boardJetOsc.frequency.value = 55;
+    const jetF = this.ctx.createBiquadFilter();
+    jetF.type = 'lowpass';
+    jetF.frequency.value = 900;
+    const jetF2 = this.ctx.createBiquadFilter();
+    jetF2.type = 'bandpass';
+    jetF2.frequency.value = 1200;
+    jetF2.Q.value = 2;
+    this.boardJetOsc.connect(jetF);
+    jetF.connect(jetF2);
+    jetF2.connect(this.boardJetGain);
+    this.boardJetOsc.start();
+  }
+
+  /**
+   * Board audio bed.
+   * @param idle 1 when board nearby / idle bobbing
+   * @param speedNorm 0..1 when riding
+   */
+  setBoardAudio(idle: number, speedNorm: number) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const hum = Math.max(idle * 0.045, speedNorm > 0.02 ? 0.02 : 0);
+    if (this.boardHumGain) {
+      this.boardHumGain.gain.setTargetAtTime(hum, t, 0.12);
+    }
+    if (this.boardHumOsc) {
+      // Gentle "hum hum hum" vibrato
+      const vib = 92 + Math.sin(t * 3.2) * 4 + speedNorm * 20;
+      this.boardHumOsc.frequency.setTargetAtTime(vib, t, 0.05);
+    }
+    if (this.boardHumOsc2) {
+      this.boardHumOsc2.frequency.setTargetAtTime(138 + Math.sin(t * 2.1) * 6, t, 0.05);
+    }
+    // Rush scales with speed
+    const rush = speedNorm * speedNorm * 0.16;
+    if (this.boardRushGain) this.boardRushGain.gain.setTargetAtTime(rush, t, 0.1);
+    if (this.boardRushFilter) {
+      this.boardRushFilter.frequency.setTargetAtTime(500 + speedNorm * 2400, t, 0.1);
+    }
+    // Jet only near top speed
+    const jet = Math.max(0, speedNorm - 0.72) / 0.28;
+    if (this.boardJetGain) this.boardJetGain.gain.setTargetAtTime(jet * 0.07, t, 0.15);
+    if (this.boardJetOsc) {
+      this.boardJetOsc.frequency.setTargetAtTime(48 + speedNorm * 40, t, 0.08);
+    }
+  }
+
+  /** Doppler-ish whoosh when passing a prop at speed */
+  playPassWhoosh(intensity = 1) {
+    if (!this.ctx || !this.sfxGain) return;
+    if (this.whooshCd > 0) return;
+    this.whooshCd = 0.18;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(420 + intensity * 200, t);
+    o.frequency.exponentialRampToValueAtTime(120, t + 0.22);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.12 * intensity, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 900;
+    o.connect(f);
+    f.connect(g);
+    g.connect(this.sfxGain);
+    o.start(t);
+    o.stop(t + 0.28);
+    this.noise(t, 0.15, 0.06 * intensity, this.sfxGain);
+  }
+
+  tickWhooshCd(dt: number) {
+    this.whooshCd = Math.max(0, this.whooshCd - dt);
   }
 
   setTension(t: number) {
