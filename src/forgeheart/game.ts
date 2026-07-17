@@ -25,6 +25,20 @@ import {
 import { ForgeAudio } from './audio';
 import { buildSkyRaceway, nearestOnPath, type RacewayBuilt } from './raceway';
 import { Surfboard, FollowerBoard, BOARD } from './surfboard';
+import {
+  writeSlot,
+  emptySave,
+  LEVEL_NAMES,
+  type ForgeSaveData,
+  type LevelId,
+  type TutorialPhaseSave,
+} from './save';
+
+export interface GameStartOptions {
+  slot: number;
+  /** null = new game on that slot */
+  save: ForgeSaveData | null;
+}
 
 const GRAVITY = 28;
 const MOVE_SPEED = 7;
@@ -118,8 +132,17 @@ export class ForgeHeartGame {
   private camPitchOffset = 0;
   private whooshCursor = 0;
   private bringEliasToRace = false;
+  private activeSlot = 0;
+  private pendingLoad: ForgeSaveData | null = null;
+  private autosaveT = 0;
+  private disposed = false;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(
+    private canvas: HTMLCanvasElement,
+    options: GameStartOptions = { slot: 0, save: null },
+  ) {
+    this.activeSlot = options.slot;
+    this.pendingLoad = options.save;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
@@ -209,16 +232,14 @@ export class ForgeHeartGame {
         this.board.requestJump();
       }
       if (e.code === 'Escape') {
-        this.paused = !this.paused;
-        if (this.paused) this.controls.unlock();
-        else this.canvas.requestPointerLock();
+        this.setPaused(!this.paused);
       }
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
     });
     this.canvas.addEventListener('click', () => {
-      if (!this.paused) this.controls.lock();
+      if (!this.paused && !this.disposed) this.controls.lock();
     });
   }
 
@@ -227,23 +248,149 @@ export class ForgeHeartGame {
   }
   setAltHeld(_v: boolean) {}
 
+  isPaused() {
+    return this.paused;
+  }
+
+  setPaused(p: boolean) {
+    this.paused = p;
+    const menu = document.getElementById('pause-menu');
+    const label = document.getElementById('pause-slot-label');
+    if (label) {
+      const lvl = this.raceActive ? LEVEL_NAMES.sky_race : LEVEL_NAMES.workshop;
+      label.textContent = `Slot ${this.activeSlot + 1} · ${lvl} · Esc to resume`;
+    }
+    if (p) {
+      this.controls.unlock();
+      menu?.classList.remove('hidden');
+    } else {
+      menu?.classList.add('hidden');
+      if (!this.disposed) this.canvas.requestPointerLock();
+    }
+  }
+
+  /** Public toast for main.ts save button */
+  toastPublic(t: string, sec = 2) {
+    this.toast(t, sec);
+  }
+
   private setHelp(t: string) {
     if (this.helpEl) this.helpEl.textContent = t;
   }
 
+  /** Build snapshot for the active slot (named by current level). */
+  buildSaveData(): ForgeSaveData {
+    const levelId: LevelId = this.raceActive ? 'sky_race' : 'workshop';
+    const phase = this.tutorial as TutorialPhaseSave;
+    return {
+      version: 1,
+      levelId,
+      levelName: LEVEL_NAMES[levelId],
+      savedAt: Date.now(),
+      health: this.health,
+      plasma: this.plasma,
+      brass: this.brass,
+      gears: this.gears,
+      wrenchUnlocked: this.wrenchUnlocked,
+      bringElias: this.bringEliasToRace || this.hadAllyOnce,
+      tutorialPhase: this.raceActive ? 'race' : phase,
+      raceCheckpoint: this.checkpointIdx,
+      raceFinished: this.raceFinished,
+    };
+  }
+
+  saveProgress() {
+    const data = this.buildSaveData();
+    writeSlot(this.activeSlot, data);
+    this.toast(`Saved · Slot ${this.activeSlot + 1} · ${data.levelName}`, 2.5);
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.paused = false;
+    try {
+      this.controls.unlock();
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.renderer.dispose();
+    } catch {
+      /* ignore */
+    }
+  }
+
   async start() {
     await this.audio.resume();
-    this.flash('The Workshop — Elias waits on the bench');
-    this.toast(
-      'Your brother is gone. The frame holds a talisman of his. Walk the lab. Read. Then use the Hand (1) to wake him — not scrap (E).',
-      8,
-    );
+
+    // New game: seed empty save on slot
+    if (!this.pendingLoad) {
+      writeSlot(this.activeSlot, emptySave('workshop'));
+      this.flash('The Workshop — Elias waits on the bench');
+      this.toast(
+        'Your brother is gone. The frame holds a talisman of his. Walk the lab. Read. Then use the Hand (1) to wake him — not scrap (E).',
+        8,
+      );
+      this.controls.lock();
+      return;
+    }
+
+    const s = this.pendingLoad;
+    this.health = s.health;
+    this.plasma = s.plasma;
+    this.brass = s.brass;
+    this.gears = s.gears;
+    this.wrenchUnlocked = s.wrenchUnlocked;
+    this.bringEliasToRace = s.bringElias;
+    this.hadAllyOnce = s.bringElias;
+
+    if (s.levelId === 'sky_race' || s.tutorialPhase === 'race' || s.tutorialPhase === 'won') {
+      this.flash(`Continue — ${LEVEL_NAMES.sky_race}`);
+      this.toast(`Loading ${s.levelName}…`, 3);
+      this.enterRaceway(s);
+      return;
+    }
+
+    // Workshop continue — restore gear; open late-game states if needed
+    const phase = s.tutorialPhase;
+    if (phase === 'breach' || phase === 'escape' || phase === 'siege' || phase === 'rebuild' || phase === 'explore') {
+      this.tutorial = phase === 'rebuild' ? 'rebuild' : phase === 'explore' ? 'explore' : phase;
+    } else {
+      this.tutorial = 'explore';
+    }
+    if (s.wrenchUnlocked) {
+      for (const it of this.interactables) {
+        if (it.type === 'wrench_pickup') {
+          it.mesh.visible = true;
+          it.opened = false;
+        }
+      }
+    }
+    if (phase === 'breach' || phase === 'escape') {
+      this.tutorial = 'siege';
+      this.breachDoor('forced');
+      if (phase === 'escape') {
+        this.tutorial = 'escape';
+        this.objective = 'Reach the escape skiff on the sky dock';
+      }
+    } else if (phase === 'siege') {
+      this.beginSiege();
+    }
+
+    this.flash(`Continue — ${s.levelName}`);
+    this.toast(`Slot ${this.activeSlot + 1} · ${s.levelName}. Esc to save.`, 4);
     this.controls.lock();
   }
 
   update(_dtExternal?: number) {
+    if (this.disposed) return;
     const dt = Math.min(0.05, this.clock.getDelta());
-    if (this.paused || this.won) {
+    if (this.paused) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    // won freezes only the brief skiff cinematic before race loads
+    if (this.won && !this.raceActive) {
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -252,6 +399,12 @@ export class ForgeHeartGame {
     this.atkCd = Math.max(0, this.atkCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
     this.audio.tickWhooshCd(dt);
+
+    this.autosaveT += dt;
+    if (this.autosaveT > 45) {
+      this.autosaveT = 0;
+      writeSlot(this.activeSlot, this.buildSaveData());
+    }
 
     if (this.raceActive) {
       this.tickRace(dt);
@@ -1210,11 +1363,18 @@ export class ForgeHeartGame {
       5,
     );
     this.setHelp('Loading sky racetrack…');
+    // Advance save to next level name before loading
+    this.bringEliasToRace = this.bringEliasToRace || this.hadAllyOnce;
+    const pre = this.buildSaveData();
+    pre.levelId = 'sky_race';
+    pre.levelName = LEVEL_NAMES.sky_race;
+    pre.tutorialPhase = 'won';
+    writeSlot(this.activeSlot, pre);
     window.setTimeout(() => this.enterRaceway(), 2800);
   }
 
   /** Tear down workshop, load sky city racetrack + surfboard. */
-  private enterRaceway() {
+  private enterRaceway(fromSave?: ForgeSaveData | null) {
     // Remove tutorial world
     this.scene.remove(this.level.group);
     for (const r of this.robots) this.scene.remove(r.mesh);
@@ -1252,17 +1412,33 @@ export class ForgeHeartGame {
     this.scene.fog = new THREE.Fog(0x8aabcc, 40, 180);
 
     this.raceActive = true;
-    this.raceFinished = false;
-    this.checkpointIdx = 0;
-    this.lastCheckpointPos.copy(this.raceway.boardSpawn);
-    this.lastCheckpointYaw = this.raceway.boardYaw;
+    this.raceFinished = fromSave?.raceFinished ?? false;
+    this.checkpointIdx = fromSave?.raceCheckpoint ?? 0;
+    if (fromSave && fromSave.raceCheckpoint > 0 && this.raceway.checkpoints[fromSave.raceCheckpoint - 1]) {
+      const cp = this.raceway.checkpoints[fromSave.raceCheckpoint - 1]!;
+      this.lastCheckpointPos.copy(cp.position);
+      const near = nearestOnPath(this.raceway.path, this.raceway.pathDist, cp.position);
+      this.lastCheckpointYaw = near.yaw;
+      // Place board at checkpoint for continue
+      this.board.position.copy(cp.position);
+      this.board.position.y += BOARD.hoverHeight;
+      this.board.yaw = near.yaw;
+      this.board.velYaw = near.yaw;
+      this.board.mesh.position.copy(this.board.position);
+      this.camera.position.set(cp.position.x + 2.5, cp.position.y + PLAYER_H, cp.position.z);
+    } else {
+      this.lastCheckpointPos.copy(this.raceway.boardSpawn);
+      this.lastCheckpointYaw = this.raceway.boardYaw;
+    }
     this.tutorial = 'race';
     this.won = false;
-    this.objective = 'Approach the humming surfboard · press E to board';
+    this.objective = this.raceFinished
+      ? 'Racetrack complete · board again anytime'
+      : 'Approach the humming surfboard · press E to board';
     this.setHelp(
       'E board · W accel · S brake · A/D bank · hold Shift slide · Space jump · E dismount (slow)',
     );
-    this.flash('SKY CITY RACETRACK');
+    this.flash(fromSave ? `CONTINUE — ${LEVEL_NAMES.sky_race}` : 'SKY CITY RACETRACK');
     this.toast(
       this.bringEliasToRace
         ? 'Elias rides with you. Hold Shift + A/D to powerslide — release for mini-turbo. Space jumps; hit ramps and rails.'
@@ -1270,6 +1446,7 @@ export class ForgeHeartGame {
       8,
     );
     this.audio.setWind(0.35);
+    writeSlot(this.activeSlot, this.buildSaveData());
     this.controls.lock();
   }
 
@@ -1468,10 +1645,11 @@ export class ForgeHeartGame {
     this.audio.playWin();
     this.flash('FINISH — Sky City run complete');
     this.toast(
-      'You carved a line through brass districts and cloud parks. Elias would have loved this wind.',
+      'You carved a line through brass districts and cloud parks. Progress saved to your slot.',
       8,
     );
-    this.setHelp('E to dismount · refresh to replay from tutorial');
+    this.setHelp('E to dismount · Esc to save · Title from pause menu');
+    writeSlot(this.activeSlot, this.buildSaveData());
   }
 
   private tryBoardInteract() {

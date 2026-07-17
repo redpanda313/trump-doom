@@ -142,8 +142,61 @@ h1 {
   margin-bottom: 0.5rem;
 }
 
+.title-card-wide {
+  max-width: 520px;
+}
+
+.save-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 1rem 0 0.75rem;
+  width: 100%;
+  max-width: 420px;
+}
+
+.save-slot {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(196, 163, 90, 0.45);
+  background: rgba(20, 16, 12, 0.75);
+  color: #e8dcc0;
+  padding: 0.65rem 0.85rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.save-slot:hover {
+  border-color: var(--gold);
+  background: rgba(40, 32, 20, 0.9);
+}
+.save-slot.selected {
+  border-color: #82e0aa;
+  box-shadow: 0 0 0 1px rgba(130, 224, 170, 0.4);
+  background: rgba(30, 50, 28, 0.55);
+}
+.save-slot.empty {
+  color: #8a8070;
+}
+.save-slot .slot-name {
+  display: block;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 0.9rem;
+}
+.save-slot .slot-meta {
+  display: block;
+  font-size: 0.68rem;
+  color: #9a9080;
+  margin-top: 0.15rem;
+}
+
 #btn-continue,
-#btn-new-game {
+#btn-new-game,
+#btn-save,
+#btn-resume,
+#btn-title {
   appearance: none;
   border: 2px solid var(--gold);
   background: linear-gradient(180deg, #1a3a6e, #0a1f44);
@@ -164,9 +217,29 @@ h1 {
 }
 
 #btn-continue:hover,
-#btn-new-game:hover {
+#btn-new-game:hover,
+#btn-save:hover,
+#btn-resume:hover,
+#btn-title:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(255, 215, 0, 0.25);
+}
+
+#btn-title {
+  background: linear-gradient(180deg, #4a3020, #2a1810);
+  border-color: #a08060;
+  color: #e0c8a0;
+  min-width: 180px;
+  padding: 0.65rem 1rem;
+  font-size: 0.8rem;
+}
+
+.pause-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
 }
 
 .save-info {

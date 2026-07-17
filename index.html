@@ -47,49 +47,35 @@
       <div id="pause-menu" class="pause-menu hidden">
         <div class="pause-card">
           <h2>PAUSED</h2>
-          <p class="pause-sub">Steampunk slice · Esc to resume</p>
-          <label class="slider-row">
-            <span>Master</span>
-            <input id="vol-master" type="range" min="0" max="100" value="80" />
-            <span class="vol-val" id="vol-master-val">80</span>
-          </label>
-          <label class="slider-row">
-            <span>Music</span>
-            <input id="vol-music" type="range" min="0" max="100" value="55" />
-            <span class="vol-val" id="vol-music-val">55</span>
-          </label>
-          <label class="slider-row">
-            <span>SFX</span>
-            <input id="vol-sfx" type="range" min="0" max="100" value="85" />
-            <span class="vol-val" id="vol-sfx-val">85</span>
-          </label>
-          <label class="slider-row">
-            <span>Look sens</span>
-            <input id="mouse-sens" type="range" min="20" max="250" value="100" />
-            <span class="vol-val" id="mouse-sens-val">1.00x</span>
-          </label>
+          <p class="pause-sub" id="pause-slot-label">Slot · Esc to resume</p>
           <div class="pause-actions">
-            <button type="button" id="btn-save">SAVE</button>
+            <button type="button" id="btn-save">SAVE PROGRESS</button>
             <button type="button" id="btn-resume">RESUME</button>
+            <button type="button" id="btn-title">TITLE SCREEN</button>
           </div>
-          <p class="pause-hint">Double-tap W/A/S/D and hold to dash · Shift sprint</p>
+          <p class="pause-hint">Save writes to the active slot (named by current level)</p>
         </div>
       </div>
       <div id="title-screen" class="title-screen">
-        <div class="title-card">
+        <div class="title-card title-card-wide">
           <p class="eyebrow">HEARTFELT STEAMPUNK · TRUE 3D · SEPARATE FROM TRUMP DOOM</p>
           <h1>FORGEHEART</h1>
           <p class="subtitle">Gift of the Brass Gods</p>
           <p class="blurb">
             Your brother is gone. In a brass workshop above the clouds, you try to call his soul into a frame.<br />
             <strong>Hand</strong> reprograms. <strong>Arc wrench</strong> fights demon-ridden scrap.<br />
-            Tutorial: wake Elias — survive the door — escape on the sky skiff.
+            Then ride the sky city on a plasma surfboard.
           </p>
+
+          <div class="save-slots" id="save-slots">
+            <!-- filled by main.ts -->
+          </div>
+
           <div class="title-actions">
             <button id="btn-continue" type="button" class="hidden">CONTINUE</button>
-            <button id="btn-new-game" type="button">ENTER THE WORKSHOP</button>
+            <button id="btn-new-game" type="button">NEW GAME</button>
           </div>
-          <p id="save-info" class="save-info hidden"></p>
+          <p id="save-info" class="save-info">Select a slot · New Game overwrites that slot · Continue loads last used</p>
           <p class="disclaimer">
             Branch feature/steampunk-vertical-slice · Three.js · Trump Doom stays on main
           </p>
