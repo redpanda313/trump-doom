@@ -139,8 +139,8 @@ export class ForgeHeartGame {
   private disposed = false;
   /** Prevent respawn spam when race floor was missing */
   private respawnCd = 0;
-  /** Board camera: third-person chase vs first-person on deck */
-  private boardCamMode: 'third' | 'first' = 'third';
+  /** Board camera: first-person default; last mode remembered in save */
+  private boardCamMode: 'first' | 'third' = 'first';
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -291,23 +291,35 @@ export class ForgeHeartGame {
   private toggleBoardCamera() {
     this.boardCamMode = this.boardCamMode === 'third' ? 'first' : 'third';
     this.syncBoardRiderVisibility();
+    this.persistBoardCamMode();
     this.toast(
       this.boardCamMode === 'first'
         ? 'Camera: first person (on the board)'
         : 'Camera: third person (chase)',
       2,
     );
-    this.setHelp(
-      this.boardCamMode === 'first'
-        ? 'FP · W/S · A/D · Shift slide · Space jump · Tab 3rd person · E dismount (slow)'
-        : '3rd · W/S · A/D · Shift slide · Space jump · Tab 1st person · E dismount (slow)',
-    );
+    this.applyBoardCamHelp();
   }
 
   /** Engineer only when mounted + third-person */
   private syncBoardRiderVisibility() {
     if (!this.board) return;
     this.board.setRiderVisible(this.board.mounted && this.boardCamMode === 'third');
+  }
+
+  private persistBoardCamMode() {
+    // Write into active slot so continue / remount keeps the choice
+    const data = this.buildSaveData();
+    writeSlot(this.activeSlot, data);
+  }
+
+  private applyBoardCamHelp() {
+    if (!this.board?.mounted) return;
+    this.setHelp(
+      this.boardCamMode === 'first'
+        ? 'FP · W/S · A/D · Shift slide · Space jump · Tab 3rd person · E dismount (slow)'
+        : '3rd · W/S · A/D · Shift slide · Space jump · Tab 1st person · E dismount (slow)',
+    );
   }
 
   /** Build snapshot for the active slot (named by current level). */
@@ -328,6 +340,7 @@ export class ForgeHeartGame {
       tutorialPhase: this.raceActive ? 'race' : phase,
       raceCheckpoint: this.checkpointIdx,
       raceFinished: this.raceFinished,
+      boardCamMode: this.boardCamMode,
     };
   }
 
@@ -1429,7 +1442,11 @@ export class ForgeHeartGame {
     this.colliders = [...this.raceway.colliders];
     this.board = new Surfboard(this.raceway.mats, this.raceway.boardSpawn, this.raceway.boardYaw);
     this.board.setRiderVisible(false);
-    this.boardCamMode = 'third';
+    // New game / no preference → first person; continue uses last saved mode
+    this.boardCamMode =
+      fromSave?.boardCamMode === 'third' || fromSave?.boardCamMode === 'first'
+        ? fromSave.boardCamMode
+        : 'first';
     this.scene.add(this.board.mesh);
 
     this.scene.background = new THREE.Color(0x6a90b0);
@@ -1831,10 +1848,13 @@ export class ForgeHeartGame {
         this.respawnAtCheckpoint(true);
         return true;
       }
+      // Remember cam mode they left surf in
+      this.persistBoardCamMode();
       this.board.dismount();
       // Stand on path next to board (not floating in void)
       this.placeBoardAndPlayerAt(near.point, this.board.yaw, false);
       this.audio.setBoardAudio(0.5, 0);
+      this.syncBoardRiderVisibility();
       this.flash('Dismounted');
       this.objective = this.raceFinished
         ? 'Racetrack complete · board again with E'
@@ -1852,16 +1872,15 @@ export class ForgeHeartGame {
       this.board.speedNorm = 0;
       this.applySpeedFx(0, 0);
       this.audio.playPickup();
-      this.flash('BOARDED — W to soar');
+      this.flash(
+        this.boardCamMode === 'first' ? 'BOARDED — first person · Tab for 3rd' : 'BOARDED — third person · Tab for 1st',
+      );
       this.toast(
-        'W accel · S brake · A/D bank · hold Shift+steer to powerslide · release for turbo · Space jump',
-        7,
+        'W accel · S brake · A/D bank · hold Shift slide · Space jump · Tab camera',
+        6,
       );
-      this.setHelp(
-        'W/S · A/D · Shift slide · Space jump · Tab cam · yellow rails grind · E dismount (slow)',
-      );
-      // Keep current cam mode; rider only if 3rd person
       this.syncBoardRiderVisibility();
+      this.applyBoardCamHelp();
       this.objective = 'Ride the sky road to the golden finish gate';
       return true;
     }

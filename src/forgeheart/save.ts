@@ -38,6 +38,8 @@ export interface ForgeSaveData {
   tutorialPhase: TutorialPhaseSave;
   raceCheckpoint: number;
   raceFinished: boolean;
+  /** Last board camera preference (defaults first person for new games) */
+  boardCamMode?: 'first' | 'third';
 }
 
 export interface SlotInfo {
@@ -68,6 +70,7 @@ export function emptySave(levelId: LevelId = 'workshop'): ForgeSaveData {
     tutorialPhase: 'explore',
     raceCheckpoint: 0,
     raceFinished: false,
+    boardCamMode: 'first',
   };
 }
 
@@ -79,6 +82,9 @@ export function readSlot(index: number): ForgeSaveData | null {
     const data = JSON.parse(raw) as ForgeSaveData;
     if (!data || data.version !== 1 || !data.levelId) return null;
     data.levelName = data.levelName || LEVEL_NAMES[data.levelId] || data.levelId;
+    if (data.boardCamMode !== 'first' && data.boardCamMode !== 'third') {
+      data.boardCamMode = 'first';
+    }
     return data;
   } catch {
     return null;
