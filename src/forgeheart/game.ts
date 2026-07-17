@@ -136,6 +136,8 @@ export class ForgeHeartGame {
   private pendingLoad: ForgeSaveData | null = null;
   private autosaveT = 0;
   private disposed = false;
+  /** Prevent respawn spam when race floor was missing */
+  private respawnCd = 0;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -1400,36 +1402,45 @@ export class ForgeHeartGame {
       this.scene.add(this.eliasBoard.mesh);
     }
 
-    // Place player near board on start plaza
-    const spawn = this.raceway.boardSpawn.clone();
-    spawn.x += 2.5;
-    spawn.y += PLAYER_H * 0.9;
-    this.camera.position.copy(spawn);
-    this.safePos.copy(spawn);
-    this.velocity.set(0, 0, 0);
-
     this.scene.background = new THREE.Color(0x6a90b0);
     this.scene.fog = new THREE.Fog(0x8aabcc, 40, 180);
 
     this.raceActive = true;
     this.raceFinished = fromSave?.raceFinished ?? false;
     this.checkpointIdx = fromSave?.raceCheckpoint ?? 0;
-    if (fromSave && fromSave.raceCheckpoint > 0 && this.raceway.checkpoints[fromSave.raceCheckpoint - 1]) {
-      const cp = this.raceway.checkpoints[fromSave.raceCheckpoint - 1]!;
-      this.lastCheckpointPos.copy(cp.position);
+    this.respawnCd = 0;
+    this.velocity.set(0, 0, 0);
+    this.onGround = true;
+    this.camera.fov = BOARD.fovBase;
+    this.camera.updateProjectionMatrix();
+    this.camera.up.set(0, 1, 0);
+    this.applySpeedFx(0, 0);
+
+    // Resolve spawn: always co-locate board + player on solid path height
+    let spawnPath = this.raceway.boardSpawn.clone();
+    let spawnYaw = this.raceway.boardYaw;
+    if (fromSave && fromSave.raceCheckpoint > 0) {
+      const cpIdx = Math.min(
+        fromSave.raceCheckpoint - 1,
+        this.raceway.checkpoints.length - 1,
+      );
+      const cp = this.raceway.checkpoints[Math.max(0, cpIdx)]!;
       const near = nearestOnPath(this.raceway.path, this.raceway.pathDist, cp.position);
-      this.lastCheckpointYaw = near.yaw;
-      // Place board at checkpoint for continue
-      this.board.position.copy(cp.position);
-      this.board.position.y += BOARD.hoverHeight;
-      this.board.yaw = near.yaw;
-      this.board.velYaw = near.yaw;
-      this.board.mesh.position.copy(this.board.position);
-      this.camera.position.set(cp.position.x + 2.5, cp.position.y + PLAYER_H, cp.position.z);
+      spawnPath = near.point.clone();
+      spawnYaw = near.yaw;
     } else {
-      this.lastCheckpointPos.copy(this.raceway.boardSpawn);
-      this.lastCheckpointYaw = this.raceway.boardYaw;
+      const near = nearestOnPath(
+        this.raceway.path,
+        this.raceway.pathDist,
+        this.raceway.boardSpawn,
+      );
+      spawnPath = near.point.clone();
+      spawnYaw = near.yaw;
     }
+    this.lastCheckpointPos.copy(spawnPath);
+    this.lastCheckpointYaw = spawnYaw;
+    this.placeBoardAndPlayerAt(spawnPath, spawnYaw, false);
+
     this.tutorial = 'race';
     this.won = false;
     this.objective = this.raceFinished
@@ -1452,6 +1463,7 @@ export class ForgeHeartGame {
 
   private tickRace(dt: number) {
     if (!this.raceway || !this.board) return;
+    this.respawnCd = Math.max(0, this.respawnCd - dt);
 
     this.board.tickIdle(dt);
     const nearBoard =
@@ -1459,10 +1471,19 @@ export class ForgeHeartGame {
 
     if (!this.board.mounted) {
       this.audio.setBoardAudio(nearBoard ? 1 : 0.15, 0);
+      // Clear any stuck speed-FX from a previous ride
+      this.applySpeedFx(0, 0);
+      if (this.camera.fov > BOARD.fovBase + 1) {
+        this.camera.fov = THREE.MathUtils.damp(this.camera.fov, BOARD.fovBase, 6, dt);
+        this.camera.updateProjectionMatrix();
+      }
+      this.camera.up.set(0, 1, 0);
+
       const forward = new THREE.Vector3();
       this.camera.getWorldDirection(forward);
       forward.y = 0;
-      forward.normalize();
+      if (forward.lengthSq() < 1e-6) forward.set(0, 0, 1);
+      else forward.normalize();
       const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
       const wish = new THREE.Vector3();
       if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) wish.add(forward);
@@ -1477,15 +1498,17 @@ export class ForgeHeartGame {
         this.velocity.y = JUMP_VEL;
         this.onGround = false;
       }
-      this.moveWithCollision(dt);
-      // Fell into open sky on foot → checkpoint
-      if (this.camera.position.y < -2) {
+      // Horizontal step only — vertical handled by path snap (race has no solid colliders)
+      this.camera.position.x += this.velocity.x * dt;
+      this.camera.position.z += this.velocity.z * dt;
+      this.camera.position.y += this.velocity.y * dt;
+      this.snapRaceFeetToRoad(dt);
+
+      if (this.camera.position.y < -4 && this.respawnCd <= 0) {
         this.respawnAtCheckpoint(true);
       }
       this.audio.setWind(0.4);
-      this.applySpeedFx(0, 0);
-      if (this.eliasBoard && !this.board.mounted) {
-        // Elias waits near board
+      if (this.eliasBoard) {
         const wait = this.board.position.clone().add(new THREE.Vector3(-2, 0, -2));
         this.eliasBoard.position.lerp(wait, 1 - Math.exp(-3 * dt));
         this.eliasBoard.mesh.position.copy(this.eliasBoard.position);
@@ -1501,11 +1524,8 @@ export class ForgeHeartGame {
     let steer = 0;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) steer -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) steer += 1;
-    const slideHeld =
-      this.keys.has('ShiftLeft') ||
-      this.keys.has('ShiftRight') ||
-      this.keys.has('ControlLeft') ||
-      this.keys.has('ControlRight');
+    // Shift only — Ctrl is fire in workshop and was falsely holding slide
+    const slideHeld = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
 
     this.board.tick(
       dt,
@@ -1578,26 +1598,89 @@ export class ForgeHeartGame {
     }
   }
 
-  private respawnAtCheckpoint(onFoot: boolean) {
-    if (!this.raceway || !this.board) return;
-    const p = this.lastCheckpointPos.clone();
-    p.y += BOARD.hoverHeight;
-    this.board.position.copy(p);
-    this.board.yaw = this.lastCheckpointYaw;
-    this.board.velYaw = this.lastCheckpointYaw;
+  /**
+   * Race road has no mesh colliders — pin feet to nearest path height
+   * so on-foot never free-falls into the cloud void.
+   */
+  private snapRaceFeetToRoad(_dt: number) {
+    if (!this.raceway) return;
+    const near = nearestOnPath(
+      this.raceway.path,
+      this.raceway.pathDist,
+      this.camera.position,
+    );
+    const lateral = Math.hypot(
+      this.camera.position.x - near.point.x,
+      this.camera.position.z - near.point.z,
+    );
+    const standY = near.point.y + PLAYER_H * 0.9 + 0.15;
+    // Soft pull back onto road if slightly off
+    if (lateral > 14) {
+      const t = Math.min(1, (lateral - 14) / 20);
+      this.camera.position.x += (near.point.x - this.camera.position.x) * t * 0.08;
+      this.camera.position.z += (near.point.z - this.camera.position.z) * t * 0.08;
+    }
+    if (lateral < 16) {
+      if (this.velocity.y <= 0.5 && this.camera.position.y <= standY + 0.35) {
+        this.camera.position.y = standY;
+        this.velocity.y = 0;
+        this.onGround = true;
+        this.safePos.copy(this.camera.position);
+      }
+    } else if (this.camera.position.y < standY - 3 && this.respawnCd <= 0) {
+      // Far off road and falling — soft reset near board
+      this.respawnAtCheckpoint(true);
+    }
+  }
+
+  /** Put board + player together on the path (mount always reachable). */
+  private placeBoardAndPlayerAt(pathPoint: THREE.Vector3, yaw: number, mount: boolean) {
+    if (!this.board) return;
+    const boardPos = pathPoint.clone();
+    boardPos.y = pathPoint.y + BOARD.hoverHeight;
+    this.board.position.copy(boardPos);
+    this.board.yaw = yaw;
+    this.board.velYaw = yaw;
     this.board.speed = 0;
     this.board.vy = 0;
-    this.board.mesh.position.copy(p);
-    if (onFoot || !this.board.mounted) {
-      this.board.mounted = false;
-      this.camera.position.set(p.x + 2, p.y + PLAYER_H * 0.9, p.z);
-      this.safePos.copy(this.camera.position);
-      this.velocity.set(0, 0, 0);
-    } else {
-      this.camera.position.copy(p).add(new THREE.Vector3(0, 2, -5));
-    }
+    this.board.slideCharge = 0;
+    this.board.sliding = false;
+    this.board.mounted = mount;
+    this.board.onGround = true;
+    this.board.mesh.position.copy(boardPos);
+    this.board.mesh.rotation.set(0, yaw, 0);
+
+    const side = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    this.camera.position.set(
+      boardPos.x + side.x * 1.6,
+      pathPoint.y + PLAYER_H * 0.9 + 0.15,
+      boardPos.z + side.z * 1.6,
+    );
+    this.safePos.copy(this.camera.position);
+    this.velocity.set(0, 0, 0);
+    this.onGround = true;
+    this.camera.fov = BOARD.fovBase;
+    this.camera.updateProjectionMatrix();
+    this.camera.up.set(0, 1, 0);
+    this.applySpeedFx(0, 0);
+  }
+
+  private respawnAtCheckpoint(onFoot: boolean) {
+    if (!this.raceway || !this.board) return;
+    if (this.respawnCd > 0) return;
+    this.respawnCd = 1.2;
+
+    const near = nearestOnPath(
+      this.raceway.path,
+      this.raceway.pathDist,
+      this.lastCheckpointPos,
+    );
+    const yaw = this.lastCheckpointYaw || near.yaw;
+    this.placeBoardAndPlayerAt(near.point, yaw, !onFoot && this.board.mounted);
+    if (onFoot) this.board.mounted = false;
+
     this.audio.playBang(0.35);
-    this.toast('Respawned at last checkpoint.', 2);
+    this.toast('Respawned at checkpoint — board is beside you (E).', 2.5);
   }
 
   private applySpeedFx(speedNorm: number, accel: number) {
@@ -1668,15 +1751,11 @@ export class ForgeHeartGame {
       if (lat > 9 || this.board.position.y < near.point.y - 2) {
         this.board.dismount();
         this.respawnAtCheckpoint(true);
-        this.toast('Over open sky — returned to checkpoint.', 3);
         return true;
       }
-      const pos = this.board.dismount();
-      this.camera.position.copy(pos);
-      this.camera.fov = BOARD.fovBase;
-      this.camera.updateProjectionMatrix();
-      this.camera.up.set(0, 1, 0);
-      this.applySpeedFx(0, 0);
+      this.board.dismount();
+      // Stand on path next to board (not floating in void)
+      this.placeBoardAndPlayerAt(near.point, this.board.yaw, false);
       this.audio.setBoardAudio(0.5, 0);
       this.flash('Dismounted');
       this.objective = this.raceFinished
@@ -1684,8 +1763,16 @@ export class ForgeHeartGame {
         : 'Board again with E · or explore on foot';
       return true;
     }
-    if (this.camera.position.distanceTo(this.board.position) < 2.8) {
+    // Generous mount range — board may sit slightly below camera height
+    const flatDist = Math.hypot(
+      this.camera.position.x - this.board.position.x,
+      this.camera.position.z - this.board.position.z,
+    );
+    if (flatDist < 4.5) {
       this.board.mount();
+      this.board.speed = 0;
+      this.board.speedNorm = 0;
+      this.applySpeedFx(0, 0);
       this.audio.playPickup();
       this.flash('BOARDED — W to soar');
       this.toast(
@@ -1696,6 +1783,17 @@ export class ForgeHeartGame {
         'W/S speed · A/D bank · hold Shift slide · Space jump · grind rails · E dismount (slow)',
       );
       this.objective = 'Ride the sky road to the golden finish gate';
+      return true;
+    }
+    // Too far — pull board to player so continue/respawn never soft-locks
+    if (flatDist > 12 && this.raceway) {
+      const near = nearestOnPath(
+        this.raceway.path,
+        this.raceway.pathDist,
+        this.camera.position,
+      );
+      this.placeBoardAndPlayerAt(near.point, near.yaw, false);
+      this.toast('Board recalled to your side — press E.', 2);
       return true;
     }
     return false;
