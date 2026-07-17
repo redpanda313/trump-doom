@@ -180,20 +180,38 @@ export function buildBrotherWorkshop(): LevelBuilt {
   wall(0.45, WALL_H, 16.5, -11, WALL_H / 2, 0, mats.iron); // west
   wall(0.45, WALL_H, 16.5, 11, WALL_H / 2, 0, mats.brassDark); // east
 
-  // North wall with doorway (center gap ~2.4 wide)
+  // North wall with doorway (center gap ~4.4 wide between wall edges at ±2.2)
   wall(9, WALL_H, 0.45, -6.7, WALL_H / 2, 8, mats.brass);
   wall(9, WALL_H, 0.45, 6.7, WALL_H / 2, 8, mats.brass);
-  // Door leafs (removed on breach)
+  // Sealed iron doors — full opening width + height so player cannot leave early.
+  // Removed entirely on breach (meshes + colliders).
   {
-    const left = box(mats, mats.ironDark, 1.15, 2.5, 0.2, -0.7, 1.25, 8);
-    const right = box(mats, mats.ironDark, 1.15, 2.5, 0.2, 0.7, 1.25, 8);
-    const bar = box(mats, mats.brass, 2.5, 0.2, 0.25, 0, 2.55, 8);
-    for (const d of [left, right, bar]) {
+    // Two leaves overlapping walls slightly so no squeeze gap at the jambs
+    const doorH = WALL_H + 0.05;
+    const doorD = 0.55; // thick enough that substeps can't tunnel
+    const left = box(mats, mats.ironDark, 2.45, doorH, doorD, -1.15, doorH / 2, 8);
+    const right = box(mats, mats.ironDark, 2.45, doorH, doorD, 1.15, doorH / 2, 8);
+    // Center seam + top lintel (visual weight + extra block)
+    const seam = box(mats, mats.brass, 0.28, doorH, doorD + 0.08, 0, doorH / 2, 8);
+    const lintel = box(mats, mats.brass, 5.0, 0.35, doorD + 0.12, 0, doorH - 0.1, 8);
+    // Invisible full-slot blocker (belt-and-suspenders collision)
+    const seal = box(mats, mats.iron, 4.7, doorH, 0.7, 0, doorH / 2, 8);
+    seal.mesh.visible = false;
+    for (const d of [left, right, seam, lintel, seal]) {
       group.add(d.mesh);
-      const c = inflateCollider(d.col, 0.03);
+      const c = inflateCollider(d.col, 0.06);
       colliders.push(c);
       doorMeshes.push(d.mesh);
       doorCols.push(c);
+    }
+    // Decorative rivets / bars (no colliders)
+    for (const x of [-1.8, -0.5, 0.5, 1.8]) {
+      for (const y of [0.6, 1.5, 2.4]) {
+        const rivet = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 6), mats.brass);
+        rivet.position.set(x, y, 8.32);
+        group.add(rivet);
+        doorMeshes.push(rivet); // hide with doors on breach
+      }
     }
   }
 
